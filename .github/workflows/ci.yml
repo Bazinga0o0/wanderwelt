@@ -1,0 +1,116 @@
+name: ci
+
+# Jeder Push auf einen Branch und jeder Pull Request. Tags lösen nur
+# release.yml aus (ein Branch-Filter allein schließt Tags aus).
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+# Das Token des Workflows muss das Repository nur lesen.
+permissions:
+  contents: read
+
+# Ein neuer Push bricht den noch laufenden Lauf desselben Branches ab: Das
+# Repository ist privat, die Minuten sind begrenzt (Windows zählt doppelt).
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Fremde Actions sind auf eine volle Commit-SHA festgelegt; der Kommentar
+# nennt das Release, zu dem sie gehört. Beides zusammen ändern.
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Installiert die Toolchain aus der toolchain-Zeile von go.mod.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # setup-go muss genau die Toolchain aus go.mod installiert haben. Hätte
+      # es nur die go-Zeile gelesen, wäre es das erste Release der Linie, ohne
+      # die späteren Sicherheitskorrekturen.
+      - name: Go ist die Toolchain aus go.mod
+        run: |
+          want="$(awk '$1 == "toolchain" { print $2 }' go.mod)"
+          have="$(go env GOVERSION)"
+          if [ -z "$want" ]; then
+            echo "::error::go.mod hat keine toolchain-Zeile"
+            exit 1
+          fi
+          if [ "$have" != "$want" ]; then
+            echo "::error::Go ist '${have}', go.mod nennt die Toolchain '${want}'"
+            exit 1
+          fi
+          echo "Go: ${have}"
+
+      - name: go vet
+        run: go vet ./...
+
+      # Unter Linux bauen auch die Starter-Pakete; was Windows braucht, steht
+      # hinter Build-Tags und läuft im Job windows.
+      - name: go test
+        run: go test -count=1 ./...
+
+      - name: go test -race (Koordinator)
+        run: go test -count=1 -race ./internal/koord/...
+
+      # Die Release-Ziele bauen sich (die Release-Builds selbst macht
+      # GoReleaser mit den Flags aus .goreleaser.yaml).
+      - name: Starter für Windows bauen
+        env:
+          GOOS: windows
+          GOARCH: amd64
+        run: go build -o /dev/null ./cmd/wanderwelt
+
+      - name: Koordinator für linux/arm64 bauen
+        env:
+          GOOS: linux
+          GOARCH: arm64
+          CGO_ENABLED: "0"
+        run: go build -o /dev/null ./cmd/wanderwelt-koordinator
+
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Dieselbe Prüfung wie im Job linux.
+      - name: Go ist die Toolchain aus go.mod
+        run: |
+          want="$(awk '$1 == "toolchain" { print $2 }' go.mod)"
+          have="$(go env GOVERSION)"
+          if [ -z "$want" ]; then
+            echo "::error::go.mod hat keine toolchain-Zeile"
+            exit 1
+          fi
+          if [ "$have" != "$want" ]; then
+            echo "::error::Go ist '${have}', go.mod nennt die Toolchain '${want}'"
+            exit 1
+          fi
+          echo "Go: ${have}"
+
+      # go vet unter Linux sieht die *_windows.go-Dateien nicht.
+      - name: go vet
+        run: go vet ./...
+
+      # Der Starter mit den Windows-Teilen (Prozesse, Fenster, Registry).
+      - name: go test (Starter)
+        run: go test -count=1 ./internal/starter/...

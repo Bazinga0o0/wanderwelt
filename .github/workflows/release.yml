@@ -1,0 +1,66 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+# Standardmäßig nur lesen; der Release-Job erweitert das für sich.
+permissions:
+  contents: read
+
+# Fremde Actions sind auf eine volle Commit-SHA festgelegt; der Kommentar
+# nennt das Release, zu dem sie gehört. Beides zusammen ändern.
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # GitHub-Release anlegen und die Archive hochladen
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Ganze Historie: GoReleaser braucht die Tags für den Changelog.
+          fetch-depth: 0
+          # Das Token bleibt nicht in der git-Konfiguration für spätere Schritte.
+          persist-credentials: false
+
+      # Installiert die Toolchain aus der toolchain-Zeile von go.mod.
+      # Kein Cache: Ein Release darf nicht aus einem Cache gebaut werden, den
+      # der CI-Workflow (der auch für Pull Requests läuft) schreiben kann.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      # Ein Release wird genau mit der Toolchain aus go.mod gebaut. Hätte
+      # setup-go nur die go-Zeile gelesen, wäre es das erste Release der
+      # Linie, ohne die späteren Sicherheitskorrekturen.
+      - name: Go ist die Toolchain aus go.mod
+        run: |
+          want="$(awk '$1 == "toolchain" { print $2 }' go.mod)"
+          have="$(go env GOVERSION)"
+          if [ -z "$want" ]; then
+            echo "::error::go.mod hat keine toolchain-Zeile"
+            exit 1
+          fi
+          if [ "$have" != "$want" ]; then
+            echo "::error::Go ist '${have}', go.mod nennt die Toolchain '${want}'"
+            exit 1
+          fi
+          echo "Go: ${have}"
+
+      # Das Symbol der exe (cmd/wanderwelt/rsrc_windows_amd64.syso) ist
+      # eingecheckt; hier nichts erzeugen: GoReleaser baut nur aus einem
+      # sauberen Arbeitsbaum.
+
+      - name: goreleaser
+        uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
+        with:
+          distribution: goreleaser
+          # Genaue Version, kein Bereich: Ein neues GoReleaser-Release ändert
+          # nicht, wie ein Tag gebaut wird, bis diese Zeile geändert ist.
+          version: "v2.20.2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

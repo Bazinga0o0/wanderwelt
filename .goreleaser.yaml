@@ -1,0 +1,107 @@
+version: 2
+
+project_name: wanderwelt
+
+before:
+  hooks:
+    # `go mod download` holt jedes Modul aus go.mod und vergleicht es mit
+    # seinem Hash in go.sum; passt einer nicht, scheitert das Release.
+    # `go mod verify` hasht danach den Modul-Cache noch einmal. Allein
+    # prüfte es hier fast nichts: Es überspringt nicht geladene Module, und
+    # der Release-Job beginnt mit leerem Cache.
+    # (`go mod tidy` nicht: Es kann go.mod und go.sum umschreiben, dann käme
+    # das Release aus Dateien, die niemand geprüft hat.)
+    - go mod download
+    - go mod verify
+    # LIESMICH.txt für das zip des Starters: der Abschnitt „## Für
+    # Mitspieler“ aus README.md, ohne die Überschrift und die Leerzeilen
+    # davor, bis zur nächsten „## “-Überschrift. Fehlt der Abschnitt,
+    # scheitert das Release. bin/ ist git-ignoriert. Lokal unter Windows aus
+    # Git Bash aufrufen (braucht sh und awk).
+    - sh -c "mkdir -p bin/release && awk '/^## / { if (drin) exit; if (/^## Für Mitspieler$/) drin = gefunden = 1; next } drin && (NF || begonnen) { begonnen = 1; print } END { if (!gefunden) exit 1 }' README.md > bin/release/LIESMICH.txt"
+
+builds:
+  # Starter: nur Windows, als GUI-Programm (kein Konsolenfenster beim Tray).
+  # Das Symbol kommt aus cmd/wanderwelt/rsrc_windows_amd64.syso; go build
+  # bindet die .syso des Pakets für windows/amd64 von selbst ein.
+  - id: wanderwelt
+    main: ./cmd/wanderwelt
+    binary: wanderwelt
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    goos:
+      - windows
+    goarch:
+      - amd64
+    ldflags:
+      - -H=windowsgui
+      - -s -w
+      - -X main.version={{.Version}}
+      # Gruppen-Build: Gruppen-Adressen (Base64-YAML, siehe README
+      # „Gruppen-Build“) aus WANDERWELT_GRUPPE; ohne die Variable bleibt es leer.
+      - '{{ if index .Env "WANDERWELT_GRUPPE" }}-X main.gruppeEingebettet={{ .Env.WANDERWELT_GRUPPE }}{{ end }}'
+
+  - id: wanderwelt-koordinator
+    main: ./cmd/wanderwelt-koordinator
+    binary: wanderwelt-koordinator
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+
+archives:
+  # Für Mitspieler: die exe und die Anleitung, beide oben im zip.
+  - id: wanderwelt-archiv
+    ids: [wanderwelt]
+    name_template: "wanderwelt-{{.Version}}-windows-amd64"
+    formats: [zip]
+    files:
+      - src: bin/release/LIESMICH.txt
+        strip_parent: true
+        info:
+          mode: 0644
+
+  # Für den Admin: Programm, systemd-Unit und Beispiel-Konfigurationen in
+  # einem Ordner; die Befehle in der Unit gehen von genau diesem Nebeneinander
+  # aus (install … wanderwelt-koordinator, cp wanderwelt-koordinator.service).
+  # Feste Rechte 0644: Ein lokal unter Windows gebautes Archiv hätte sonst
+  # für alle beschreibbare Dateien.
+  - id: wanderwelt-koordinator-archiv
+    ids: [wanderwelt-koordinator]
+    name_template: "wanderwelt-koordinator-{{.Version}}-linux-{{.Arch}}"
+    formats: [tar.gz]
+    wrap_in_directory: true
+    files:
+      - src: deploy/wanderwelt-koordinator.service
+        strip_parent: true
+        info:
+          mode: 0644
+      - src: deploy/*.example.yaml
+        strip_parent: true
+        info:
+          mode: 0644
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs(\\(.*\\))?:"
+      - "^test(\\(.*\\))?:"
+
+release:
+  # Besitzer und Name kommen aus dem git-Remote origin.
+  draft: false
+  prerelease: auto

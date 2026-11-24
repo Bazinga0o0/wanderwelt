@@ -1,0 +1,142 @@
+# wanderwelt-Symbol, Entwurf A „Pfad“: Referenzpixel aus render(N, "pfad", zustand)
+# in symbol-entwurf.html, erzeugt mit: node testdata/referenz.mjs <symbol-entwurf.html>
+# farbe <buchstabe> <hex>; bild <N> <zustand|-> mit N Zeilen; hash <N> <zustand|-> <sha256 der Zeilen>
+farbe . transparent
+farbe a #7cc444
+farbe b #6db83b
+farbe c #8ad152
+farbe d #74bd40
+farbe e #5fa534
+farbe f #579c2f
+farbe g #4f9029
+farbe h #478526
+farbe i #9a6a42
+farbe j #8c5e39
+farbe k #a47448
+farbe l #7b5131
+farbe m #6f482b
+farbe n #845836
+farbe o #24170f
+farbe p #dcc690
+farbe q #cdb47c
+farbe r #e04a3c
+farbe s #f6f7f5
+farbe t #ffffff
+farbe u #3fa34d
+farbe v #e09a1a
+farbe w #2f6fdb
+farbe x #17a2b8
+farbe y #d64541
+bild 16 -
+.......oo.......
+.....oobdoo.....
+...ooadaccboo...
+.ooccqpqqqppqoo.
+oadqpqpppppadbdo
+ofepqddbbbbdcggo
+oeefebdbcbahghgo
+okfffffbbhhghhmo
+oiiifefegghgmmmo
+okjkjkfeglllnlno
+oiikjikillnmmnmo
+ojijjiikmmnlnllo
+.ooikkijllnlnoo.
+...ooijkmmloo...
+.....ooiloo.....
+.......oo.......
+bild 32 -
+...............oo...............
+.............ooaaoo.............
+...........oodbdbbcoo...........
+.........ooabdccbdccaoo.........
+.......oocdadbdadcadcddoo.......
+.....oobbbbdccacadabbqqqpoo.....
+...oobdbcbacpppqpqqqqqqqqqboo...
+.ooaabbbbpppqpqqpqpppqqppccdaoo.
+odcbdddqqpqqpqppqqpqqqpbdcddaaao
+offdbdpqpqqpqpppqqqpddccbbadbhgo
+oeefeqppqpqcabddbdbbacaabcbghhgo
+ofefffeppcdadcaacbbbadabbhggghgo
+okffefeeecbcdcccbbbbcabhghhgghho
+okfffeefeefbcbacdacbbhhhhgghghgo
+oijeefefffeeebadbcdhgghggglmgmlo
+ojiiifeefeffeeedchghgggglhllmnmo
+oiijjikfejeffeeegggghhlnnlnllnmo
+ojikkjjjiifffffeghhhgllnmnnnnmno
+oijkjkjkkjifeeffggmngmlmllmnlnmo
+oikjikkjjkijiffehhnnmnmlmmmmlmlo
+okkjjikjkjkjkjjfhnmnmlllnllnmlno
+okiiijjijjijkkkknnnlnllmnmnlmnlo
+ojkijijiijjjkjiknlmlmmnlnmllnlno
+okkjjjiijjjjkjkjllnllnnnnnnmlmno
+.oojjjjjjkkkiikjlnnnmnnnlllmloo.
+...ooikiiikkkijjmlmmmlnmmlnoo...
+.....ookkikkiijknmlmlmnlmoo.....
+.......ookkjjkjklmnnmlmoo.......
+.........ooikkjinnnnnoo.........
+...........ooijilmnoo...........
+.............oojnoo.............
+...............oo...............
+bild 16 #3fa34d
+.......oo.......
+.....oobdoo.....
+...ooadaccboo...
+.ooccqpqqqppqoo.
+oadqpqpppppadbdo
+ofepqddbbbbdcggo
+oeefebdbcbahghgo
+okfffffbbhhghhmo
+oiiifefegghgmmmo
+okjkjkfegllooooo
+oiikjikillouuuuo
+ojijjiikmouuuuuu
+.ooikkijlouuuuuu
+...ooijkmouuuuuu
+.....ooilouuuuuo
+.......oo.ouuuoo
+bild 32 #3fa34d
+...............oo...............
+.............ooaaoo.............
+...........oodbdbbcoo...........
+.........ooabdccbdccaoo.........
+.......oocdadbdadcadcddoo.......
+.....oobbbbdccacadabbqqqpoo.....
+...oobdbcbacpppqpqqqqqqqqqboo...
+.ooaabbbbpppqpqqpqpppqqppccdaoo.
+odcbdddqqpqqpqppqqpqqqpbdcddaaao
+offdbdpqpqqpqpppqqqpddccbbadbhgo
+oeefeqppqpqcabddbdbbacaabcbghhgo
+ofefffeppcdadcaacbbbadabbhggghgo
+okffefeeecbcdcccbbbbcabhghhgghho
+okfffeefeefbcbacdacbbhhhhgghghgo
+oijeefefffeeebadbcdhgghggglmgmlo
+ojiiifeefeffeeedchghgggglhllmnmo
+oiijjikfejeffeeegggghhlnnlnllnmo
+ojikkjjjiifffffeghhhgllnmnnnnmno
+oijkjkjkkjifeeffggmngmlooooolnmo
+oikjikkjjkijiffehhnnmooooooooolo
+okkjjikjkjkjkjjfhnmnoouuuuuuuooo
+okiiijjijjijkkkknnnoouuuuuuuuuoo
+ojkijijiijjjkjiknlmouuuuuuuuuuuo
+okkjjjiijjjjkjkjlloouuuuuuuuuuuo
+.oojjjjjjkkkiikjlnoouuuuuuuuuuuu
+...ooikiiikkkijjmloouuuuuuuuuuuu
+.....ookkikkiijknmoouuuuuuuuuuuu
+.......ookkjjkjklmoouuuuuuuuuuuo
+.........ooikkjinnnouuuuuuuuuuuo
+...........ooijilmnoouuuuuuuuuoo
+.............oojnoo.oouuuuuuuoo.
+...............oo....ooouuuooo..
+hash 48 - e789f3c7667481e92cdd3c5260273a0959bf95a6aab84bb3b6966a8a23875fd6
+hash 64 - 0c74ffb17c3deb6c6230b99005d6a7fba9edeb4d5645e2cc27b00a5dd302068c
+hash 256 - 6a229525bf773f60545335502467f749a78a5cc859e021a73b86e4165e2c1ea6
+hash 16 #3fa34d 59d9d9da6a75d664c0a4ab5730b07b211903ccfea8287276981e6d19058e91df
+hash 16 #e09a1a 12e466a9f196b0be284b34a989ee6716067fd74d526bb42b17b185c9803f302b
+hash 16 #2f6fdb 41d19764703314070818d30b3acbc4208ef8c5265a7c2eca88e4d057686be2e4
+hash 16 #17a2b8 eaabbdad20dcb0e582a750e0b6af4a19d3193d015240a305d8c39da26d80167a
+hash 16 #d64541 f83a9d7d73cf4590d1ea3fa4d4f4d395e1d75d686749d04cb96c10b475852cd8
+hash 32 #3fa34d a06f2e3d71fdb1490f9b183f38c408f9ab636b19a5aede4763d949efc437cac0
+hash 32 #e09a1a eafa1a14863bb9ba62f99093aae6984518ef686300a1abdfb73c1878fbb4af92
+hash 32 #2f6fdb 04029ba8a5f1d1d9d9318a71480d0d0b0e9ef1fb34959daa0de42acbe35a5ed5
+hash 32 #17a2b8 636cb993e786ff4de6713a33dfff3eb6767013b339a16319e732e486daa05c91
+hash 32 #d64541 fcc7d538e4de4f6d96c18d92c4d7dcdea37ac809fe66eb528b85e2a372cd10eb

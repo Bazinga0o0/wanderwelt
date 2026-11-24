@@ -1,0 +1,97 @@
+# Versions-Manifest – liegt auf dem Koordinator unter manifest_file.
+# Gehostet wird immer genau minecraft_version.
+# Hash-Form: "sha256:<hex>" oder "sha512:<hex>". Der Starter lädt nach
+# <Home>/deps/<name>/ und prüft jeden Hash; name muss eindeutig sein.
+# Der Koordinator liest die Datei beim Start und bei
+# „systemctl reload wanderwelt-koordinator“ (SIGHUP) – nach jeder Änderung
+# also reload. Ist sie beim Neuladen kaputt, gilt der bisherige Stand weiter.
+#
+# url: https://… (externe, versionierte Quelle) oder wanderwelt:<datei> –
+# dann liefert der Koordinator die Datei selbst aus, aus
+# <data_dir>/artifacts/<datei> (nur an Mitglieder; <datei> nur aus
+# Buchstaben, Ziffern, ".", "_" und "-"). Ablegen und Hash bilden: README,
+# Abschnitt „Manifest aktualisieren“. Beim Start und Neuladen prüft der
+# Koordinator alle wanderwelt:-Einträge und meldet fehlende Dateien oder
+# falsche Hashes im Log.
+# Stand der Werte: 2026-11-22.
+
+minecraft_version: "26.2"
+
+# Temurin-JRE für Windows x64, in der Java-Version, die 26.2 verlangt:
+# javaVersion.majorVersion = 25 (Versions-JSON von Mojang, java-runtime-epsilon).
+# Adoptium-API:
+#   https://api.adoptium.net/v3/assets/latest/25/hotspot?os=windows&architecture=x64&image_type=jre&vendor=eclipse
+#   url  = binary.package.link
+#   hash = "sha256:" + binary.package.checksum
+# Release jdk-25.0.5.1+2, 58,6 MB. Muss ein Zip sein (wird entpackt).
+java:
+  name: temurin-jre
+  url: "https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.5.1%2B2/OpenJDK25U-jre_x64_windows_hotspot_25.0.5.1_2.zip"
+  hash: "sha256:3260a1b9899f30ac80d737daafc053042c525249f52d066101fbf81d78d73f25"
+
+# Fabric-Server-Launcher für 26.2: Loader 0.20.1, Installer 1.1.2 (jeweils
+# neueste stabile). Liegt auf dem Koordinator: Fabric-Meta erzeugt die Datei
+# bei Bedarf neu, ihr Hash kann sich dann ändern – mit eigener Kopie bleibt
+# er fest.
+# Loader-Versionen:    https://meta.fabricmc.net/v2/versions/loader/26.2
+# Installer-Versionen: https://meta.fabricmc.net/v2/versions/installer
+# Einmal laden und ablegen (README „Manifest aktualisieren“):
+#   curl -fL -o fabric-server-launch-26.2-0.20.1-1.1.2.jar \
+#     https://meta.fabricmc.net/v2/versions/loader/26.2/0.20.1/1.1.2/server/jar
+# Am 2026-11-22 hatte diese Datei
+#   sha256:4dbe153d1e672beaf14fd8f78f6df6a47060dfbe698b772ca7b6dd476457de6c
+# PLATZHALTER: hash durch den Hash der abgelegten Datei ersetzen.
+fabric_server:
+  name: fabric-server-launch
+  url: "wanderwelt:fabric-server-launch-26.2-0.20.1-1.1.2.jar"
+  hash: "sha256:HASH-DER-ABGELEGTEN-DATEI"
+
+# tunnel-Client (tunnel.exe) für Windows aus dem tunnel-Repo (privat) –
+# liegt deshalb auf dem Koordinator. Eine .exe wird direkt benutzt, aus einem
+# .zip wird tunnel.exe entpackt (den Windows-Client im tunnel-Repo mit
+# GOOS=windows GOARCH=amd64 bauen).
+# PLATZHALTER: hash durch den Hash der abgelegten Datei ersetzen. Neue
+# Version: unter neuem Dateinamen ablegen, url und hash hier umstellen.
+tunnel:
+  name: tunnel
+  url: "wanderwelt:tunnel-windows-amd64.exe"
+  hash: "sha256:HASH-DER-ABGELEGTEN-DATEI"
+
+# JRE und Mods bleiben extern (Adoptium und Modrinth sind stabil und
+# versioniert); sie dürfen aber ebenfalls als wanderwelt:<datei> auf dem
+# Koordinator liegen.
+#
+# Mods von Modrinth, je Slug:
+#   GET https://api.modrinth.com/v2/project/<slug>/version?game_versions=["26.2"]&loaders=["fabric"]
+#   url  = files[primary].url
+#   hash = "sha512:" + files[primary].hashes.sha512
+# optional: true → fehlt der Mod oder schlägt er fehl, läuft der Server ohne ihn.
+mods:
+  # Lithium mc26.2-0.25.3-fabric (release)
+  - name: lithium
+    url: "https://cdn.modrinth.com/data/gvQqBUqZ/versions/f7vZ0VWU/lithium-fabric-0.25.3%2Bmc26.2.jar"
+    hash: "sha512:148b638f3c6229fbaf487120a2344a0af5e411a5aa6533d5db9d75da0a8c0d8304f63eb4cca13f4d03b2c9b4c23d559dd74c1d832422ef8a3087bd005e62a8bd"
+  # FerriteCore 9.0.0-fabric (release; gilt für 26.1 bis 26.3)
+  - name: ferrite-core
+    url: "https://cdn.modrinth.com/data/uXXizFIs/versions/d5ddUdiB/ferritecore-9.0.0-fabric.jar"
+    hash: "sha512:d81fa97e11784c19d42f89c2f433831d007603dd7193cee45fa177e4a6a9c52b384b198586e04a0f7f63cd996fed713322578bde9a8db57e1188854ae5cbe584"
+  # C2ME 0.4.2-alpha.0.71+26.2 – C2ME veröffentlicht für 26.2 nur Alpha-
+  # Builds (und einen älteren 0.4.1-beta.1.0); nur mit Profil c2me: true.
+  - name: c2me-fabric
+    url: "https://cdn.modrinth.com/data/VSNURh3q/versions/qwS7dYKj/c2me-fabric-mc26.2-0.4.2-alpha.0.71.jar"
+    hash: "sha512:a45125e3eed782aebde7e2d434bd8a5821ac053f5eec3c6f16f75bd7b2fe9f4a4e0e87ee7b403192cba4481a56cc9458e10c682f9013c47eac6bcd3c648fd90e"
+    optional: true
+
+# Selbst-Update der Starter (README „Starter-Update ausrollen“): die
+# wanderwelt.exe aus dem Release-zip als wanderwelt-<version>.exe nach
+# <data_dir>/artifacts/ legen, dann diesen Eintrag setzen und reload.
+# version: Release-Version ohne „v“ (Tag v0.5.0 → "0.5.0"); url nur
+# wanderwelt:<datei>; sha256: Hex aus sha256sum; size: Bytes (stat -c %s).
+# Fehlt die Datei oder passt der Hash nicht, meldet der Koordinator das im
+# Log und liefert das Manifest ohne starter aus. Starter aktualisieren sich
+# nur auf eine größere Version als ihre eigene.
+# starter:
+#   version: "0.5.0"
+#   url: "wanderwelt:wanderwelt-0.5.0.exe"
+#   sha256: "HEX-AUS-SHA256SUM"
+#   size: 12345678

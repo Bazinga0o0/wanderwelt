@@ -1,0 +1,19 @@
+# Gruppendatei für den Starter. Der Admin gibt sie jedem Mitglied; der
+# Starter kopiert sie bei der Installation nach %LOCALAPPDATA%\wanderwelt\gruppe.yaml.
+
+# Adresse des Koordinators (Dienst-Subdomain hinter tunneld).
+coordinator: https://wanderwelt.example.org
+
+# tunneld-Server, über den der Host den Minecraft-Port freigibt
+# (wie in der Konfiguration des tunnel-Clients).
+tunnel_server: tunnel.example.org:7443
+
+# Persönlicher tunnel-API-Token des Mitglieds (geheim halten!).
+token: ""
+
+# Nur für lokale Tests gegen einen Koordinator mit auth.mode: dev:
+# diese E-Mail wird als Identität mitgeschickt.
+# dev_identity_email: freund@example.org
+
+# Nur für lokale Tests mit selbst signiertem Zertifikat.
+# tunnel_insecure_skip_verify: false

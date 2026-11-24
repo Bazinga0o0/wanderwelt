@@ -1,0 +1,71 @@
+# systemd-Unit des wanderwelt-Koordinators.
+# Installation:
+#   useradd --system --no-create-home --shell /usr/sbin/nologin wanderwelt
+#   install -m 0755 wanderwelt-koordinator /opt/wanderwelt/
+#   Konfiguration nach /etc/wanderwelt/koordinator.yaml (siehe
+#   koordinator.example.yaml); data_dir: /var/lib/wanderwelt. Sie muss root
+#   gehören und darf nur für root beschreibbar sein („mitglied“ führt
+#   Befehle aus ihr als root aus und lehnt sie sonst ab):
+#     chown root:wanderwelt /etc/wanderwelt/koordinator.yaml
+#     chmod 0640 /etc/wanderwelt/koordinator.yaml
+#   Vorher freie Inodes prüfen: df -i /var/lib – die Blobs brauchen
+#   1–1,5 Mio. Dateien (siehe data_dir in koordinator.example.yaml).
+#   Das Dienst-Geheimnis (port_holder.secret_file) muss für den Benutzer
+#   wanderwelt lesbar sein, für andere nicht:
+#     chown root:wanderwelt /etc/wanderwelt/tunneld-service.secret
+#     chmod 0640 /etc/wanderwelt/tunneld-service.secret
+#   cp wanderwelt-koordinator.service /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now wanderwelt-koordinator
+#
+# Aktualisieren – das Programm immer vor der Konfiguration: Ein älteres
+# Programm lehnt neue Schlüssel (etwa snapshot_interval, provisioning) ab
+# und startet mit ihnen nicht mehr.
+#   install -m 0755 wanderwelt-koordinator /opt/wanderwelt/
+#   cp wanderwelt-koordinator.service /etc/systemd/system/
+#   systemctl daemon-reload
+#   systemctl restart wanderwelt-koordinator
+# Danach neue Schlüssel in /etc/wanderwelt/koordinator.yaml eintragen und
+# noch einmal „systemctl restart wanderwelt-koordinator“ (reload liest nur
+# die Mitglieder und das Versions-Manifest). Nach dem Aktualisieren restart,
+# nicht reload: Ein
+# laufendes älteres Programm fängt SIGHUP vielleicht nicht ab.
+
+[Unit]
+Description=wanderwelt-Koordinator
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=wanderwelt
+Group=wanderwelt
+# /var/lib/wanderwelt: Zuschlag, Stände, UUID-Zwischenspeicher, Profile
+StateDirectory=wanderwelt
+StateDirectoryMode=0750
+ExecStart=/opt/wanderwelt/wanderwelt-koordinator serve --config /etc/wanderwelt/koordinator.yaml
+# systemctl reload: liest die Mitgliederliste und das Versions-Manifest neu
+# (wanderwelt-koordinator mitglied neu|entfernen löst das selbst aus).
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+# Ein Ende durch SIGHUP (Programm ohne Handler, etwa ein älteres) gilt für
+# systemd als sauber; ohne diese Zeile bliebe der Koordinator dann aus.
+RestartForceExitStatus=SIGHUP
+RestartSec=5
+# Zeit für das saubere Beenden laufender Anfragen
+TimeoutStopSec=40
+
+# Härtung
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

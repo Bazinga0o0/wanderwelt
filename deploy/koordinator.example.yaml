@@ -1,0 +1,101 @@
+# Beispiel-Konfiguration des Koordinators (/etc/wanderwelt/koordinator.yaml).
+# Unbekannte Schlüssel sind ein Fehler, damit Tippfehler auffallen.
+
+# Adresse für die HTTP-API; tunneld leitet die Dienst-Subdomain hierher
+# (upstream in der tunneld-Konfiguration, nur Loopback).
+listen: 127.0.0.1:8470
+
+# Zustand (Zuschlag), Blobs, Generationen, UUID-Zwischenspeicher, und unter
+# artifacts/ die Dateien, die der Koordinator selbst ausliefert (Manifest-URL
+# wanderwelt:<datei>, siehe README „Manifest aktualisieren“).
+# Passt zu StateDirectory=wanderwelt der systemd-Unit.
+# Inodes: Regionsdateien liegen pro Chunk als eigene Blobs (dazu ein Rezept
+# je Datei). Eine Welt von ~3 GB ergibt ~500 000 Blob-Dateien, mit
+# Aufbewahrung und Archiven rechnen wir mit 1–1,5 Mio. Dateien. Vor dem
+# Einrichten freie Inodes des Dateisystems prüfen:
+#   df -i /var/lib/wanderwelt     (Spalte IFree deutlich über 1,5 Mio.)
+# ext4 legt Inodes beim Formatieren fest; xfs und btrfs vergeben sie nach
+# Bedarf.
+data_dir: /var/lib/wanderwelt
+
+# Adresse, mit der sich die Spieler im Minecraft-Client verbinden
+# (öffentlicher TCP-Port 15565 auf dem tunneld-Server).
+minecraft_address: tunnel.example.org:15565
+
+auth:
+  # tunneld: Identität nur aus den Headern von tunneld (nur Loopback).
+  # dev:     Header X-Tunnel-Account-Email von überall – nur lokal benutzen!
+  mode: tunneld
+
+# Dienst-Schnittstelle von tunneld für den Halter des Minecraft-Ports.
+# Ohne api gibt es keinen Port-Halter (nur für den lokalen Betrieb).
+port_holder:
+  api: http://127.0.0.1:7447                      # Dienst-Schnittstelle von tunneld (nur Loopback)
+  secret_file: /etc/wanderwelt/tunneld-service.secret  # gleiches Geheimnis wie secret_file des Dienstes in tunneld
+  port: 15565
+
+# Platzbudget für alle Stände (auch archivierte Welten).
+# Erlaubt: ganze Zahl mit KiB, MiB, GiB, TiB oder reine Bytes. Standard 15GiB.
+storage_budget: 15GiB
+
+# Abstand der Zwischenstände, gilt für jeden Host (Go-Dauer wie 5m oder 90s).
+# Erlaubt 1m–30m, Standard 5m. Starter, die den Wert nicht kennen, nehmen 5m.
+# Die Messwerte je Stand stehen im Log des Hosts (siehe README).
+snapshot_interval: 5m
+
+# Leerlauf-Frist, gilt für jeden Host: So lange ohne Spieler, dann beendet er
+# seine Sitzung sauber (Server stoppen, Schluss-Stand hochladen, Zuschlag
+# freigeben). Go-Dauer, erlaubt 1m–60m, Standard 10m. Starter, die den Wert
+# nicht kennen, nehmen 2m. PCs im Dauerbetrieb (Haken im Tray des Starters,
+# nur am Netz) beenden mangels Spielern nie.
+empty_timeout: 10m
+
+# Mitglieder: tunnel-Konto (E-Mail, Groß/Klein egal) und Minecraft-Name.
+# minecraft darf fehlen: Dann meldet das Mitglied den Namen beim Einrichten
+# des Starters selbst. Whitelist und Ops entstehen aus dieser Liste; was
+# Admins im Fenster ändern (Rollen, Namen, Speicherbudget), steht in
+# data_dir (roles.json, names.json, settings.json) und gilt vor diesen
+# Werten (README „Rollen, Minecraft-Namen und Speicherbudget“).
+# admin: darf Welt übernehmen und das Manifest ändern.
+# Am einfachsten mit „wanderwelt-koordinator mitglied neu|entfernen“ pflegen
+# (README „Mitglieder hinzufügen“); systemctl reload übernimmt die Liste ohne
+# Neustart. Whitelist und Ops bekommt ein gerade laufender Minecraft-Server
+# erst ab der nächsten Host-Sitzung.
+members:
+  - email: admin@example.org
+    minecraft: AdminName
+    admin: true
+    op: true
+  - email: freund@example.org
+    minecraft: FreundName
+
+# Welt-Einstellungen für server.properties, gelten für jeden Host.
+# Leistungsschlüssel (view-distance, simulation-distance) kommen aus dem
+# Profil des Host-PCs und gehören nicht hierher.
+world_settings:
+  difficulty: normal
+  gamemode: survival
+  pvp: "true"
+  spawn-protection: "0"
+  motd: "wanderwelt – unsere gemeinsame Welt"
+
+# Versions-Manifest (siehe manifest.example.yaml).
+manifest_file: /etc/wanderwelt/manifest.yaml
+
+# Für „wanderwelt-koordinator mitglied …“ (läuft als root); für serve ohne
+# Bedeutung. Die tunneld-Admin-CLI läuft als
+#   runuser -u <run_as> -- <tunneld_bin> admin … --config <tunneld_config>
+# reload_command läuft als root: mitglied verlangt darum, dass diese Datei
+# root gehört und nur für root beschreibbar ist (root:wanderwelt 0640).
+provisioning:
+  tunneld_bin: /opt/tunneld/tunneld          # Standard
+  tunneld_config: /etc/tunneld/config.yaml   # Pflicht
+  run_as: tunneld                            # Standard
+  # Landen in der Gruppendatei (Pflicht für mitglied neu):
+  coordinator_url: https://wanderwelt.example.org
+  tunnel_server: tunnel.example.org:7443
+  # Web-Anmeldung von tunneld für die Zugangsdatei eines neuen Kontos;
+  # Standard https:// und der Host aus tunnel_server.
+  # web_url: https://tunnel.example.org
+  # Lässt den laufenden Koordinator die Mitglieder neu lesen (ohne Shell).
+  reload_command: systemctl reload wanderwelt-koordinator   # Standard

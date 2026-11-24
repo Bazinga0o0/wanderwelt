@@ -1,0 +1,9 @@
+# Build-Ausgaben
+/bin/
+*.exe
+# GoReleaser (release --snapshot)
+/dist/
+
+# lokale Laufzeitordner (Dev-Koordinator, Test-Starter, Testläufe)
+/run/
+/tmp/
