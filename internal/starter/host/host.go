@@ -542,6 +542,7 @@ type Session struct {
 	// läuft. handedOver: Die Übergabe ist abgeschlossen, der Server stoppt
 	// ohne weiteren Stand.
 	ho         *handover
+	modeDebt   map[string]string // Spielmodi, die nach dem Rückbau noch zu setzen sind (Spieler war offline)
 	handoverCh <-chan struct{}
 	hoPending  bool
 	handedOver bool
@@ -1461,6 +1462,7 @@ func (s *Session) onPlayers(names []string, err error) {
 	for _, n := range names {
 		s.seen[n] = true
 	}
+	s.applyModeDebt(names)
 	if s.ho != nil {
 		// Während einer Übergabe zählt keine Leerlauf-Frist.
 		s.hoPlayers(names)

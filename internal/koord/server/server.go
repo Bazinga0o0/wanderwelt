@@ -219,6 +219,7 @@ func New(cfg *config.Config, lm *lease.Manager, st *store.Store, ph portholder.C
 	s.mux.HandleFunc("POST /v1/presence", s.handlePresence)
 	s.mux.HandleFunc("POST /v1/handover/start", s.handleHandoverStart)
 	s.mux.HandleFunc("POST /v1/handover/ready", s.handleHandoverReady)
+	s.mux.HandleFunc("POST /v1/handover/abort", s.handleHandoverAbort)
 	s.mux.HandleFunc("GET /v1/host/settings", s.handleHostSettings)
 	s.mux.HandleFunc("POST /v1/blobs/missing", s.handleMissing)
 	s.mux.HandleFunc("POST /v1/blobs/fetch", s.handleFetchBlobs)

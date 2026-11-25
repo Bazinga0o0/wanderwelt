@@ -167,7 +167,7 @@ Der Tag startet `.github/workflows/release.yml`; GoReleaser
 
 | Datei | Inhalt |
 |---|---|
-| `wanderwelt-<version>-windows-amd64.zip` | `wanderwelt.exe` (GUI-Programm, mit Symbol) und `LIESMICH.txt` – der Abschnitt „Für Mitspieler“ oben |
+| `wanderwelt-<version>-windows-amd64.zip` | `wanderwelt.exe` (GUI-Programm, mit Symbol), `README.md` (der Abschnitt „Für Mitspieler“ oben), `LICENSE` und `NOTICE` |
 | `wanderwelt-koordinator-<version>-linux-amd64.tar.gz`, `…-linux-arm64.tar.gz` | ein Ordner mit `wanderwelt-koordinator`, `wanderwelt-koordinator.service` und den `*.example.yaml` aus `deploy/` |
 | `checksums.txt` | SHA-256 aller Archive |
 
@@ -217,7 +217,7 @@ die Commit-Kurzform (etwa `5963b1b`, mit `-dirty` bei offenen Änderungen),
 ein `go build` ohne `-X` lässt `dev`.
 
 Vor dem Taggen lokal prüfen, unter Windows aus Git Bash (der Hook für
-`LIESMICH.txt` braucht `sh` und `awk`):
+`README.md` im zip braucht `sh` und `awk`):
 
 ```
 go run github.com/goreleaser/goreleaser/v2@v2.20.2 check
@@ -400,14 +400,21 @@ im Abschnitt „Für Mitspieler“ beschrieben.
 Beendet der Host sein Spiel („Spiel für mich beenden“) und sind andere
 Spieler online, fragt der Starter, ob die Welt an den besten Mitspieler-PC
 übergeben werden soll; die Spieler wechseln nach kurzer Pause auf den neuen
-Host. Dafür friert der Server die Welt ein (`tick freeze`), speichert den
-Stand mit den echten Spielmodi und setzt alle Spieler auf Zuschauer
-(`gamemode spectator`), so dass nichts Neues entsteht. Wer während der
-Übergabe dazukommt, wird ebenfalls Zuschauer. Der neue Host hebt das
-Einfrieren nach seinem Start auf. Scheitert die Übergabe nach dem Einfrieren,
-bekommen die Spieler ihre Modi zurück, das Einfrieren endet, und der Server
-stoppt wie sonst (speichern, hochladen, alle raus). Ist vor dem Einfrieren
-kein Kandidat da, endet es gleich wie früher. „Hosten ohne Weitergabe
+Host. Dafür friert der Server die Welt ein (`tick freeze`), schaltet das
+Speichern ab, merkt sich die Spielmodi und speichert alles (`save-all flush`).
+Nach einer kurzen Ruhezeit (die Dateien der Welt sind eine Sekunde lang
+unverändert) wird der Stand bereitgestellt; ändert sich dabei eine Datei,
+wird erneut gespeichert und bis zu dreimal von vorn versucht. Erst danach
+werden alle Spieler Zuschauer (`gamemode spectator`), so dass nichts Neues
+entsteht und der Stand nie Zuschauer-Daten enthält. Wer während der Übergabe
+dazukommt, wird ebenfalls Zuschauer. Der neue Host hebt das Einfrieren nach
+seinem Start auf. Scheitert die Übergabe, bevor der Stand eingereicht ist,
+bekommen die Spieler ihre Modi zurück, das Einfrieren endet, der Koordinator
+erfährt vom Abbruch, und es geht normal weiter: der Server stoppt nicht, der
+Host darf „Spiel für mich beenden“ erneut versuchen. Die Vorbereitung hat eine Gesamtfrist von 4 Minuten; danach (oder wenn zu wenig Zeit bis zur 5-Minuten-Frist des Koordinators bleibt) wird sie abgebrochen, bevor jemand Zuschauer wird. Die Spieler werden gleich nach dem Einfrieren gewarnt, bis zum Zuschauer-Setzen entstandene Änderungen können verloren gehen. Scheitert sie erst nach
+dem Einreichen des Standes, stoppt der Server wie sonst (ohne neuen Stand,
+alle raus). Ist vor dem Einfrieren kein Kandidat da, endet es gleich wie
+früher. „Hosten ohne Weitergabe
 beenden“ (Tray-Menü und Start-Reiter, nur als Host) stoppt den Server wie
 früher für alle. Ein PC meldet dem Koordinator alle 5 s, dass er übernehmen
 kann, solange er mitspielt oder im Dauerbetrieb untätig ist; Standard ist an.
@@ -523,11 +530,15 @@ dabei so:
   wartende befördert: Er bekommt den Haupt-Port (`main_port` im Lebenszeichen)
   und behält den Ersatz-Port bis zum Ende seines Zuschlags; die nächste
   Übergabe nimmt den anderen.
-- Scheitert die Übergabe (2 min ohne ready nach dem Start, 5 min ohne
+- Scheitert die Übergabe (5 min ohne ready nach dem Start, 5 min ohne
   „bereit“ nach dem Angebot, der wartende Zuschlag verfällt oder wird
   zurückgegeben), wird der wartende Zuschlag verworfen, der Ersatz-Port
   geräumt, und der alte Host sieht 2 min lang „gescheitert“ mit Grund; er darf
-  dann wieder einreichen. Während einer Übergabe wird ein Zurückholen mit 409
+  dann wieder einreichen. Bricht der alte Host die Übergabe vor dem
+  Einreichen selbst ab (`POST /v1/handover/abort` mit `handover_id`,
+  `lease_id`, `machine_id`, 204; nur der Host), räumt der Koordinator wie bei
+  „gescheitert“, vergisst die Übergabe aber gleich, so dass eine neue
+  beginnen darf. Während einer Übergabe wird ein Zurückholen mit 409
   abgelehnt, und umgekehrt beginnt keine Übergabe, solange eins aussteht.
 
 Konfiguration: `port_holder.handover_ports` mit genau zwei Ersatz-Ports
@@ -543,7 +554,7 @@ port_holder:
 Ohne `handover_ports` gibt es keine Übergabe (409, der Starter endet wie
 bisher). Die Übergabe und der Ersatz-Port des beförderten Hosts stehen in
 `handover.json` im Datenordner und überstehen einen Neustart des
-Koordinators; die Fristen (2 min, 5 min) zählen danach neu. Der erste Takt
+Koordinators; die Fristen (5 min, 5 min) zählen danach neu. Der erste Takt
 räumt nur Ersatz-Ports, die keinem gültigen Zuschlag und keiner laufenden
 Übergabe gehören.
 

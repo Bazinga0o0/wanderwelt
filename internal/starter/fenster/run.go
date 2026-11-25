@@ -3,16 +3,20 @@
 package fenster
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"runtime/debug"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
 
 	"gioui.org/app"
 	"gioui.org/io/event"
+	"gioui.org/io/system"
 	"gioui.org/op"
 	"gioui.org/unit"
 
@@ -36,8 +40,9 @@ func fensterSperre() string { return `Local\wanderwelt-fenster-` + group.HomeKey
 
 // Run öffnet das Fenster und kehrt zurück, wenn es geschlossen ist. Ist
 // schon ein Fenster offen, holt Run es nach vorn und kehrt sofort zurück.
-// exe ist die wanderwelt.exe, die gestartet wird, wenn keine Instanz läuft.
-func Run(ctx context.Context, exe string) error {
+// exe ist die wanderwelt.exe, die gestartet wird, wenn keine Instanz läuft;
+// version ist die Version dieses Programms (Abgleich mit der Instanz).
+func Run(ctx context.Context, exe, version string) error {
 	release, ok, err := winsys.SingleInstance(fensterSperre())
 	if err != nil {
 		return err
@@ -83,6 +88,18 @@ func Run(ctx context.Context, exe string) error {
 	var hwnd atomic.Uintptr
 	d := neueDaten(func() error { return starteInstanz(exe) }, w.Invalidate)
 	d.autoStart = true
+	d.eigeneVersion = version
+	d.installiertIst = func(v string) bool { return installierteVersion(installierteExe()) == v }
+	d.neustart = func() error {
+		// Erst die Sperre freigeben, dann das neue Fenster starten: Es
+		// findet die Sperre frei und übernimmt.
+		release()
+		if err := starteFenster(installierteExe()); err != nil {
+			return err
+		}
+		w.Perform(system.ActionClose)
+		return nil
+	}
 	d.minimiert = func() bool { return winsys.Minimized(hwnd.Load()) }
 	u := neueOberflaeche(th, d)
 	go d.lauf(ctx)
@@ -138,4 +155,37 @@ func fensterHandle(e event.Event) (uintptr, bool) {
 func losgeloest() *syscall.SysProcAttr {
 	const detachedProcess = 0x00000008
 	return &syscall.SysProcAttr{CreationFlags: detachedProcess | syscall.CREATE_NEW_PROCESS_GROUP}
+}
+
+// installierteExe: die installierte Kopie, Home()/wanderwelt.exe.
+func installierteExe() string { return filepath.Join(group.Home(), "wanderwelt.exe") }
+
+// installierteVersion fragt die exe nach ihrer Version („wanderwelt X“);
+// leer, wenn sie fehlt oder nicht antwortet.
+func installierteVersion(exe string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, exe, "version")
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x08000000} // CREATE_NO_WINDOW
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	if cmd.Run() != nil {
+		return ""
+	}
+	f := strings.Fields(out.String())
+	if len(f) < 2 || f[0] != "wanderwelt" {
+		return ""
+	}
+	return f[1]
+}
+
+// starteFenster startet exe mit dem Argument „fenster“, losgelöst.
+func starteFenster(exe string) error {
+	cmd := exec.Command(exe, "fenster")
+	cmd.Dir = group.Home()
+	cmd.SysProcAttr = losgeloest()
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("%s: %w", exe, err)
+	}
+	return cmd.Process.Release()
 }

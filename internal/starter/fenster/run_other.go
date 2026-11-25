@@ -9,4 +9,4 @@ import (
 )
 
 // Run gibt es nur unter Windows.
-func Run(ctx context.Context, exe string) error { return winsys.ErrUnsupported }
+func Run(ctx context.Context, exe, version string) error { return winsys.ErrUnsupported }

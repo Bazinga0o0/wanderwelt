@@ -440,12 +440,12 @@ func TestHandoverFailures(t *testing.T) {
 		return e, lidA
 	}
 
-	t.Run("2 min ohne ready", func(t *testing.T) {
+	t.Run("5 min ohne ready", func(t *testing.T) {
 		e, lidA := setup()
 		st := e.mustStart(userA, pcA1, lidA)
-		e.advance(110*time.Second, beatA(e, lidA))
+		e.advance(290*time.Second, beatA(e, lidA))
 		if s := e.state(); s == nil || s.State != api.HandoverPreparing {
-			t.Fatalf("nach 110 s: %+v", s)
+			t.Fatalf("nach 290 s: %+v", s)
 		}
 		e.advance(20*time.Second, beatA(e, lidA))
 		if code := e.readyReq(userA, pcA1, lidA, st.HandoverID); code != http.StatusConflict {
@@ -557,4 +557,92 @@ func TestHandoverOldHostCrashAfterReady(t *testing.T) {
 	if code, _ := e.hb(userA, pcA1, lidA, true); code != http.StatusConflict {
 		t.Fatalf("Lebenszeichen des alten Hosts: %d", code)
 	}
+}
+
+// Der alte Host bricht seine Übergabe ab (POST /v1/handover/abort): in der
+// Vorbereitung und nach ready. Wartender Zuschlag und Ersatz-Port werden
+// geräumt, die Übergabe ist gleich vergessen, eine neue darf beginnen.
+func TestHandoverAbort(t *testing.T) {
+	abort := func(e *hoEnv, as who, machine string, leaseID, hoID int64) int {
+		e.t.Helper()
+		return call(e.t, e.base, as, http.MethodPost, "/v1/handover/abort",
+			api.HandoverAbortRequest{HandoverID: hoID, LeaseID: leaseID, MachineID: machine}, nil)
+	}
+	setup := func() (*hoEnv, int64) {
+		e := newHoEnv(t)
+		lidA := e.hostWithPlayers(userA, pcA1)
+		e.present(userB, pcB, true)
+		e.ph.take()
+		return e, lidA
+	}
+
+	t.Run("in der Vorbereitung", func(t *testing.T) {
+		e, lidA := setup()
+		st := e.mustStart(userA, pcA1, lidA)
+		if code := abort(e, userA, pcA1, lidA, st.HandoverID); code != http.StatusNoContent {
+			t.Fatalf("abort: %d", code)
+		}
+		if s := e.state(); s != nil {
+			t.Fatalf("Übergabe nach dem Abbruch noch da: %+v", s)
+		}
+		if code := e.readyReq(userA, pcA1, lidA, st.HandoverID); code != http.StatusConflict {
+			t.Fatalf("ready nach dem Abbruch: %d", code)
+		}
+		// Commit ist erlaubt, eine neue Übergabe auch.
+		if code := e.commitCode(userA, pcA1, lidA, 5); code != http.StatusOK {
+			t.Fatalf("Commit nach dem Abbruch: %d", code)
+		}
+		e.present(userB, pcB, true)
+		if code, _ := e.start(userA, pcA1, lidA); code != http.StatusOK {
+			t.Fatalf("neuer Start nach dem Abbruch: %d", code)
+		}
+	})
+
+	t.Run("nach ready", func(t *testing.T) {
+		e, lidA := setup()
+		st := e.mustStart(userA, pcA1, lidA)
+		e.mustReady(userA, pcA1, lidA, st.HandoverID)
+		lidB := e.present(userB, pcB, true).Handover.LeaseID
+		e.mustHB(userB, pcB, lidB, false, "Bob")
+		e.ph.take()
+		if code := abort(e, userA, pcA1, lidA, st.HandoverID); code != http.StatusNoContent {
+			t.Fatalf("abort: %d", code)
+		}
+		e.wantCalls("clear 15566")
+		if _, ok := e.lm.Incoming(); ok {
+			t.Fatal("wartender Zuschlag nach dem Abbruch noch da")
+		}
+		if s := e.state(); s != nil {
+			t.Fatalf("Übergabe nach dem Abbruch noch da: %+v", s)
+		}
+		if code, _ := e.hb(userB, pcB, lidB, true, "Bob"); code != http.StatusConflict {
+			t.Fatalf("Lebenszeichen des verworfenen Zuschlags: %d", code)
+		}
+		if _, _, ok := e.lm.Current(); !ok {
+			t.Fatal("Haupt-Zuschlag weg")
+		}
+		e.present(userB, pcB, true)
+		if code, _ := e.start(userA, pcA1, lidA); code != http.StatusOK {
+			t.Fatalf("neuer Start nach dem Abbruch: %d", code)
+		}
+	})
+
+	t.Run("fremd und unbekannt", func(t *testing.T) {
+		e, lidA := setup()
+		st := e.mustStart(userA, pcA1, lidA)
+		// Nicht der Host: abgewiesen, die Übergabe bleibt.
+		if code := abort(e, userB, pcB, lidA, st.HandoverID); code != http.StatusConflict {
+			t.Fatalf("abort eines Fremden: %d", code)
+		}
+		if s := e.state(); s == nil || s.State != api.HandoverPreparing {
+			t.Fatalf("Übergabe nach fremdem Abbruch: %+v", s)
+		}
+		// Falsche Übergabe-Nummer: nichts zu tun, nichts passiert.
+		if code := abort(e, userA, pcA1, lidA, st.HandoverID+99); code != http.StatusNoContent {
+			t.Fatalf("abort mit falscher Nummer: %d", code)
+		}
+		if s := e.state(); s == nil {
+			t.Fatal("Übergabe nach abort mit falscher Nummer weg")
+		}
+	})
 }

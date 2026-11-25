@@ -210,6 +210,12 @@ func (c *Client) Heartbeat(ctx context.Context, req api.HeartbeatRequest) (*api.
 // errors.Is.
 var ErrNoHandover = errors.New("keine Übergabe möglich")
 
+// ErrHandoverBusy: HandoverStart wird mit 409 "läuft schon" abgelehnt: Beim
+// Koordinator hängt noch eine frühere Übergabe (ihr Abbruch kam nicht an).
+// Das ist keine endgültige Absage; ein neuer Versuch gleich darauf kann
+// gelingen. Der Koordinator liefert keinen Code, erkannt wird der Text.
+var ErrHandoverBusy = errors.New("Übergabe läuft schon")
+
 // Presence meldet die Bereitschaft dieses Starters, das Hosten zu übernehmen
 // (POST /v1/presence). Die Antwort trägt ein Übergabe-Angebot, wenn der
 // Koordinator diesen PC als neuen Host gewählt hat.
@@ -234,6 +240,9 @@ func (c *Client) HandoverStart(ctx context.Context, leaseID int64, machineID str
 			if msg == "" {
 				msg = "ohne Angabe"
 			}
+			if strings.Contains(msg, "läuft schon") {
+				return nil, fmt.Errorf("%w: %s", ErrHandoverBusy, msg)
+			}
 			return nil, fmt.Errorf("%w: %s", ErrNoHandover, msg)
 		}
 		return nil, err
@@ -246,6 +255,17 @@ func (c *Client) HandoverStart(ctx context.Context, leaseID int64, machineID str
 // ein.
 func (c *Client) HandoverReady(ctx context.Context, req api.HandoverReadyRequest) error {
 	return c.call(ctx, callTimeout, http.MethodPost, "/v1/handover/ready", req, nil)
+}
+
+// HandoverAbort bricht die Übergabe ab, weil der alte Host weiterspielt
+// (POST /v1/handover/abort). Ein älterer Koordinator (404) kennt den
+// Endpunkt nicht; das ist kein Fehler, seine Frist beendet die Übergabe.
+func (c *Client) HandoverAbort(ctx context.Context, req api.HandoverAbortRequest) error {
+	err := c.call(ctx, callTimeout, http.MethodPost, "/v1/handover/abort", req, nil)
+	if se, ok := errors.AsType[*StatusError](err); ok && se.StatusCode == http.StatusNotFound {
+		return nil
+	}
+	return err
 }
 
 // Release gibt den Zuschlag zurück (POST /v1/lease/release).

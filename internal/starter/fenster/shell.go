@@ -181,6 +181,13 @@ func (u *oberflaeche) kopf(gtx layout.Context, s schnappschuss, admin bool) layo
 	m := op.Record(gtx.Ops)
 	dims := layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if !s.veraltet {
+				return layout.Dimensions{}
+			}
+			return layout.Inset{Left: 20, Right: 20, Top: 2, Bottom: 6}.Layout(gtx, t.farbig(
+				"wanderwelt wurde aktualisiert – Fenster bitte schließen und neu öffnen", t.f.fehler))
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Top: 14, Left: 20, Right: 20, Bottom: 4}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions { return t.symbol(gtx, 26) }),

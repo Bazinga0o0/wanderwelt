@@ -13,12 +13,12 @@ before:
     # das Release aus Dateien, die niemand geprüft hat.)
     - go mod download
     - go mod verify
-    # LIESMICH.txt für das zip des Starters: der Abschnitt „## Für
-    # Mitspieler“ aus README.md, ohne die Überschrift und die Leerzeilen
-    # davor, bis zur nächsten „## “-Überschrift. Fehlt der Abschnitt,
-    # scheitert das Release. bin/ ist git-ignoriert. Lokal unter Windows aus
-    # Git Bash aufrufen (braucht sh und awk).
-    - sh -c "mkdir -p bin/release && awk '/^## / { if (drin) exit; if (/^## Für Mitspieler$/) drin = gefunden = 1; next } drin && (NF || begonnen) { begonnen = 1; print } END { if (!gefunden) exit 1 }' README.md > bin/release/LIESMICH.txt"
+    # README.md für das zip des Starters: Titel, dann der Abschnitt „## Für
+    # Mitspieler“ aus README.md (ohne die Überschrift und die Leerzeilen
+    # davor, bis zur nächsten „## “-Überschrift), am Ende Link und Lizenz.
+    # Fehlt der Abschnitt, scheitert das Release. bin/ ist git-ignoriert.
+    # Lokal unter Windows aus Git Bash aufrufen (braucht sh und awk).
+    - sh -c "mkdir -p bin/release && awk '/^## / { if (drin) exit; if (/^## Für Mitspieler$/) drin = gefunden = 1; next } drin && (NF || begonnen) { begonnen = 1; print } END { if (!gefunden) exit 1 }' README.md > bin/release/abschnitt.md && { printf '# wanderwelt\n\n'; cat bin/release/abschnitt.md; printf '\n---\n\nProjekt: https://github.com/Bazinga0o0/wanderwelt · Lizenz: Elastic License 2.0 (siehe LICENSE und NOTICE)\n'; } > bin/release/README.md"
 
 builds:
   # Starter: nur Windows, als GUI-Programm (kein Konsolenfenster beim Tray).
@@ -65,8 +65,14 @@ archives:
     name_template: "wanderwelt-{{.Version}}-windows-amd64"
     formats: [zip]
     files:
-      - src: bin/release/LIESMICH.txt
+      - src: bin/release/README.md
         strip_parent: true
+        info:
+          mode: 0644
+      - src: LICENSE
+        info:
+          mode: 0644
+      - src: NOTICE
         info:
           mode: 0644
 

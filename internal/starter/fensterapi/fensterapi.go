@@ -389,7 +389,7 @@ func UebergabeText(h *api.HandoverState) string {
 	}
 	switch h.State {
 	case api.HandoverFailed:
-		return "Übergabe an " + to + " gescheitert – der Server stoppt normal"
+		return "Übergabe an " + to + " gescheitert"
 	case api.HandoverReady:
 		return "Übergabe an " + to + " läuft: die Spieler wechseln …"
 	}
@@ -399,4 +399,4 @@ func UebergabeText(h *api.HandoverState) string {
 // UebergabeFrage steht in der Rückfrage „Spiel für mich beenden“ als Host,
 // wenn andere Spieler online sind (Tray und Fenster).
 const UebergabeFrage = "Die Welt wird an den besten PC der Mitspieler übergeben; ihr spielt nach kurzer Pause weiter. " +
-	"Klappt das nicht, stoppt der Server wie gewohnt."
+	"Klappt das nicht, geht es auf deinem PC normal weiter."

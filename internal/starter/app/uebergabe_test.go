@@ -191,7 +191,7 @@ func TestOnHandoverNotices(t *testing.T) {
 	}
 	time.Sleep(50 * time.Millisecond)
 	all := strings.Join(notes(), "|")
-	for _, want := range []string{"Übergabe an Mara …", "Übergabe gescheitert – Server stoppt normal.", "Niemand kann übernehmen – Server stoppt normal."} {
+	for _, want := range []string{"Übergabe an Mara …", "Übergabe gescheitert.", "Niemand kann übernehmen – Server stoppt normal."} {
 		if !strings.Contains(all, want) {
 			t.Errorf("Hinweis %q fehlt: %s", want, all)
 		}

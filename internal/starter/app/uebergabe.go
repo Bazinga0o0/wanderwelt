@@ -444,7 +444,7 @@ func (a *App) onHandover(state, to string) {
 		a.uebergabe.gave = ""
 		a.uebergabe.mu.Unlock()
 		a.handoverDetail("")
-		go notify("Übergabe gescheitert – Server stoppt normal.")
+		go notify("Übergabe gescheitert.")
 	case stateNobody:
 		a.handoverDetail("")
 		go notify("Niemand kann übernehmen – Server stoppt normal.")

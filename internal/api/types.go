@@ -398,6 +398,14 @@ type HandoverReadyRequest struct {
 	Generation int64  `json:"generation"`
 }
 
+// HandoverAbortRequest: Der alte Host bricht seine Übergabe vor dem
+// gelungenen Commit ab (POST /v1/handover/abort) und hostet weiter.
+type HandoverAbortRequest struct {
+	HandoverID int64  `json:"handover_id"`
+	LeaseID    int64  `json:"lease_id"`
+	MachineID  string `json:"machine_id"`
+}
+
 // Werte von HandoverState.State.
 const (
 	HandoverPreparing = "vorbereitung" // alter Host speichert und lädt hoch

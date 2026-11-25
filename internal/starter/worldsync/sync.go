@@ -105,6 +105,12 @@ var ErrLocalRecipe = errors.New("lokales Rezept unbrauchbar")
 // Download nicht abgeschlossen wurde (siehe DownloadIncomplete).
 var ErrDownloadIncomplete = errors.New("Download im Weltordner nicht abgeschlossen; das ist kein gültiger Stand")
 
+// ErrChangedWhileCopying: Eine Datei der Welt hat sich während des Kopierens
+// in Stage geändert (der Server schrieb trotz save-off). Der
+// Bereitstellungsordner ist dann kein stimmiger Stand; ein neuer Versuch nach
+// erneutem Speichern kann gelingen.
+var ErrChangedWhileCopying = errors.New("Datei hat sich beim Kopieren geändert")
+
 // chtimes setzt die Änderungszeit einer bereitgestellten Datei (in Tests
 // ersetzbar, um ein Dateisystem mit groben Zeiten nachzustellen).
 var chtimes = os.Chtimes
@@ -488,7 +494,7 @@ func stageFile(src, dst string, before fs.FileInfo) error {
 		return err
 	}
 	if n != before.Size() || !sameState(before, after) {
-		return fmt.Errorf("%s hat sich beim Kopieren geändert (Stage nur zwischen SaveBarrier und release)", src)
+		return fmt.Errorf("%s hat sich beim Kopieren geändert (Stage nur zwischen SaveBarrier und release): %w", src, ErrChangedWhileCopying)
 	}
 	if err := out.Sync(); err != nil {
 		return err

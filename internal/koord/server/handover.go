@@ -18,11 +18,13 @@ package server
 // bekommt den Haupt-Port (MainPort im Lebenszeichen), den Ersatz-Port
 // behält er bis zum Ende seines Zuschlags.
 //
-// Scheitert die Übergabe (2 min ohne ready nach dem Start, 5 min ohne
+// Scheitert die Übergabe (5 min ohne ready nach dem Start, 5 min ohne
 // „bereit“ nach dem Angebot, der wartende Zuschlag verfällt oder wird
 // zurückgegeben), wird der wartende Zuschlag verworfen, der Ersatz-Port
 // geräumt und der Zustand „gescheitert“ bleibt für den alten Host 2 min
-// abrufbar; Commit ist für ihn wieder erlaubt.
+// abrufbar; Commit ist für ihn wieder erlaubt. Bricht der alte Host die
+// Übergabe selbst ab (POST /v1/handover/abort), wird sie wie ein Scheitern
+// aufgeräumt, aber gleich vergessen.
 //
 // Die Übergabe und der Ersatz-Port des beförderten Hosts stehen auch auf der
 // Platte (handover_state.go) und überstehen einen Neustart des Koordinators;
@@ -53,7 +55,7 @@ const (
 	// presenceKeep: So lange merkt sich der Koordinator eine Bereitschaft.
 	presenceKeep = time.Minute
 	// handoverReadyTimeout: Vom Start bis ready des alten Hosts.
-	handoverReadyTimeout = 2 * time.Minute
+	handoverReadyTimeout = 5 * time.Minute
 	// handoverBereitTimeout: Vom Angebot bis „neuer Host bereit“.
 	handoverBereitTimeout = 5 * time.Minute
 	// handoverFailedKeep: So lange bleibt „gescheitert“ abrufbar.
@@ -553,6 +555,43 @@ func (s *Server) handleHandoverReady(w http.ResponseWriter, r *http.Request) {
 			s.internal(w, "Übergabe", err)
 			return
 		}
+		s.restoreError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleHandoverAbort: Der alte Host bricht seine Übergabe ab und hostet
+// weiter (der Übergabe-Stand ließ sich nicht bereitstellen oder einreichen).
+// Wartender Zuschlag und Ersatz-Port werden wie bei einem Scheitern geräumt;
+// die Übergabe ist danach weg, eine neue darf beginnen. Gibt es keine
+// passende Übergabe (mehr), ist das kein Fehler (204).
+func (s *Server) handleHandoverAbort(w http.ResponseWriter, r *http.Request) {
+	id := identityOf(r)
+	var req api.HandoverAbortRequest
+	if !s.decode(w, r, maxJSONBody, &req) {
+		return
+	}
+	err := func() error {
+		s.phMu.Lock()
+		defer s.phMu.Unlock()
+		ctx := context.WithoutCancel(r.Context())
+		s.handoverStepLocked(ctx)
+		info, err := s.mainOf(id, req.LeaseID, req.MachineID)
+		if err != nil {
+			return err
+		}
+		h := s.ho.Load()
+		if !h.active() || h.id != req.HandoverID || h.oldLease != info.LeaseID {
+			return nil
+		}
+		s.log.Info("Übergabe vom alten Host abgebrochen", "id", h.id)
+		s.failHandoverLocked(h, "Der alte Host hat die Übergabe abgebrochen")
+		s.setHoLocked(nil)
+		s.clearHandoverPortsLocked(ctx)
+		return nil
+	}()
+	if err != nil {
 		s.restoreError(w, err)
 		return
 	}

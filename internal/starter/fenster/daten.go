@@ -78,7 +78,10 @@ type quelle interface {
 type schnappschuss struct {
 	verb      verbindung
 	startFehl string // Starten der Instanz gescheitert
-	runde     uint64 // zählt Verbindungen; neue Instanz → neue Runde
+	// veraltet: Die Instanz hat eine andere Version als dieses Fenster,
+	// und ein automatischer Neustart ging nicht (oder ist schon gelaufen).
+	veraltet bool
+	runde    uint64 // zählt Verbindungen; neue Instanz → neue Runde
 
 	z    *fensterapi.Zustand
 	zErr string // Zustand nicht lesbar, Instanz antwortet aber
@@ -124,6 +127,18 @@ type daten struct {
 
 	wach chan struct{}
 
+	// Versionsabgleich (Update bei offenem Fenster): eigeneVersion ist die
+	// Version dieses Prozesses; installiertIst sagt, ob die installierte
+	// exe die übergebene Version hat; neustart startet das Fenster neu
+	// (und beendet diesen Prozess). Alle drei dürfen fehlen (dann nichts).
+	eigeneVersion  string
+	installiertIst func(version string) bool
+	neustart       func() error
+	versionTakt    time.Duration // Mindestabstand der Prüfung der installierten exe
+
+	neustartGetan   bool      // der eine Neustart dieses Prozesses ist verbraucht (unter mu)
+	versionGeprueft time.Time // letzte Prüfung der installierten exe (unter mu)
+
 	mu          sync.Mutex
 	s           schnappschuss
 	c           quelle
@@ -156,6 +171,7 @@ func neueDaten(starte func() error, neuZeichnen func()) *daten {
 		neuZeichnen: neuZeichnen,
 		jetzt:       time.Now,
 		wach:        make(chan struct{}, 1),
+		versionTakt: 30 * time.Second,
 	}
 }
 
@@ -338,6 +354,9 @@ func (d *daten) runde(ctx context.Context) {
 	holeMitglieder := r == reiterMitglieder && admin && faellig(n.mitgliederAb, jetzt, d.mitgliederTakt)
 	d.s = n
 	d.mu.Unlock()
+	if err == nil {
+		d.versionPruefen(z)
+	}
 
 	// Listen nacheinander (die Instanz ist lokal; keine Parallelität nötig).
 	if holeStaende {
@@ -516,4 +535,44 @@ func (d *daten) aktion(name string, body any, fertig func(error)) {
 		}
 		d.wecken()
 	}()
+}
+
+// versionPruefen vergleicht die Version der Instanz mit der eigenen. Bei
+// einem Unterschied (beide nicht leer) startet es das Fenster neu, aber
+// nur einmal je Prozess und nur, wenn die installierte exe schon die Version
+// der Instanz hat; sonst bleibt der Hinweis „veraltet“.
+func (d *daten) versionPruefen(z *fensterapi.Zustand) {
+	if z == nil || z.Version == "" || d.eigeneVersion == "" || z.Version == d.eigeneVersion {
+		d.setzeVeraltet(false)
+		return
+	}
+	d.mu.Lock()
+	jetzt := d.jetzt()
+	if d.neustartGetan || (!d.versionGeprueft.IsZero() && jetzt.Sub(d.versionGeprueft) < d.versionTakt) {
+		d.mu.Unlock()
+		d.setzeVeraltet(true)
+		return
+	}
+	d.versionGeprueft = jetzt
+	d.mu.Unlock()
+	if d.installiertIst == nil || d.neustart == nil || !d.installiertIst(z.Version) {
+		d.setzeVeraltet(true)
+		return
+	}
+	d.mu.Lock()
+	d.neustartGetan = true
+	d.mu.Unlock()
+	if err := d.neustart(); err != nil {
+		d.setzeVeraltet(true)
+	}
+}
+
+func (d *daten) setzeVeraltet(v bool) {
+	d.mu.Lock()
+	ch := d.s.veraltet != v
+	d.s.veraltet = v
+	d.mu.Unlock()
+	if ch && d.neuZeichnen != nil {
+		d.neuZeichnen()
+	}
 }

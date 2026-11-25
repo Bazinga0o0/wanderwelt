@@ -118,7 +118,7 @@ func usage() {
 func fensterCmd() int {
 	exe, err := os.Executable()
 	if err == nil {
-		err = fenster.Run(context.Background(), exe)
+		err = fenster.Run(context.Background(), exe, version)
 	}
 	if err != nil {
 		zenity.Error("Das wanderwelt-Fenster lässt sich nicht öffnen:\n\n"+err.Error(),
