@@ -13,12 +13,8 @@ before:
     # das Release aus Dateien, die niemand geprüft hat.)
     - go mod download
     - go mod verify
-    # README.md für das zip des Starters: Titel, dann der Abschnitt „## Für
-    # Mitspieler“ aus README.md (ohne die Überschrift und die Leerzeilen
-    # davor, bis zur nächsten „## “-Überschrift), am Ende Link und Lizenz.
-    # Fehlt der Abschnitt, scheitert das Release. bin/ ist git-ignoriert.
-    # Lokal unter Windows aus Git Bash aufrufen (braucht sh und awk).
-    - sh -c "mkdir -p bin/release && awk '/^## / { if (drin) exit; if (/^## Für Mitspieler$/) drin = gefunden = 1; next } drin && (NF || begonnen) { begonnen = 1; print } END { if (!gefunden) exit 1 }' README.md > bin/release/abschnitt.md && { printf '# wanderwelt\n\n'; cat bin/release/abschnitt.md; printf '\n---\n\nProjekt: https://github.com/Bazinga0o0/wanderwelt · Lizenz: Elastic License 2.0 (siehe LICENSE und NOTICE)\n'; } > bin/release/README.md"
+    # README.md für das zip des Starters (siehe tools/release-readme.sh).
+    - sh tools/release-readme.sh
 
 builds:
   # Starter: nur Windows, als GUI-Programm (kein Konsolenfenster beim Tray).
