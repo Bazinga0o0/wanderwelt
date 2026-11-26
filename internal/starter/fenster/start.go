@@ -100,6 +100,13 @@ func (v *startAnsicht) layout(gtx layout.Context, u *oberflaeche, s schnappschus
 	}
 
 	var teile []layout.Widget
+	if z.Status != nil && z.Status.Maintenance != nil {
+		wm := z.Status.Maintenance
+		teile = append(teile, func(gtx layout.Context) layout.Dimensions {
+			titel, txt := fensterapi.WartungText(wm, jetzt)
+			return t.meldung(gtx, meldungWarn, titel, txt)
+		})
+	}
 	if rp := restore(z); rp != nil {
 		teile = append(teile, func(gtx layout.Context) layout.Dimensions {
 			wer := cmp.Or(rp.By, "Ein Admin")

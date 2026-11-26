@@ -82,6 +82,22 @@ mods:
     hash: "sha512:a45125e3eed782aebde7e2d434bd8a5821ac053f5eec3c6f16f75bd7b2fe9f4a4e0e87ee7b403192cba4481a56cc9458e10c682f9013c47eac6bcd3c648fd90e"
     optional: true
 
+# Konfigdateien für den Server-Ordner (optional; README „Konfigdateien im
+# Manifest“). path: relativ zum Server-Ordner, nur unterhalb von config/,
+# nur Endungen json/toml/yaml/yml/properties/txt/cfg/conf; url und hash wie
+# bei den Mods (https:// oder wanderwelt:<datei>). mode: enforce (Standard) –
+# der Starter schreibt die Datei bei jedem Serverstart neu, wenn sie fehlt
+# oder der Hash abweicht; default – nur anlegen, wenn sie fehlt (der Host darf
+# sie lokal ändern). Ein ungültiger Eintrag lässt den Koordinator das ganze
+# Manifest ablehnen; scheitert beim Starter eine Datei, startet der Server
+# trotzdem (Meldung im Log). Der Koordinator muss dafür zuerst aktualisiert
+# sein.
+# configs:
+#   - path: config/viper_spawn_control.json
+#     url: "wanderwelt:viper_spawn_control.json"
+#     hash: "sha256:HEX-AUS-SHA256SUM"
+#     mode: enforce
+
 # Selbst-Update der Starter (README „Starter-Update ausrollen“): die
 # wanderwelt.exe aus dem Release-zip als wanderwelt-<version>.exe nach
 # <data_dir>/artifacts/ legen, dann diesen Eintrag setzen und reload.

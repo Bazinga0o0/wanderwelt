@@ -104,6 +104,7 @@ func TestDauerbetriebTaktOnlyWhenNobodyHosts(t *testing.T) {
 		{"Programm endet", func(a *App) { a.status, a.quitting = freeStatus, true }},
 		{"Windows-Sitzung endet", func(a *App) { a.status, a.ending = freeStatus, true }},
 		{"pausiert", func(a *App) { a.status, a.dauer.paused = freeStatus, true }},
+		{"Wartung am Server", func(a *App) { a.status = &api.Status{Maintenance: &api.Maintenance{Reason: "Update"}} }},
 		{"Wartezeit nach Fehlschlag", func(a *App) { a.status, a.dauer.nextTry = freeStatus, time.Now().Add(time.Minute) }},
 	} {
 		a := &App{ctx: t.Context()}

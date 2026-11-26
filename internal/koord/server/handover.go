@@ -440,6 +440,8 @@ func (s *Server) handleHandoverStart(w http.ResponseWriter, r *http.Request) {
 				"Host-Übergabe ist auf diesem Koordinator nicht eingerichtet (port_holder.handover_ports fehlt)"}
 		case s.handoverActive():
 			return api.HandoverStartResponse{}, &httpError{http.StatusConflict, "Es läuft schon eine Host-Übergabe"}
+		case s.wartung.Load() != nil:
+			return api.HandoverStartResponse{}, &httpError{http.StatusConflict, "Wartung am Server – keine Host-Übergabe möglich"}
 		case s.pending.Load() != nil:
 			return api.HandoverStartResponse{}, &httpError{http.StatusConflict, "Ein Zurückholen steht aus – keine Host-Übergabe möglich"}
 		}

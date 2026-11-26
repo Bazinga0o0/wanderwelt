@@ -183,7 +183,8 @@ func (a *App) autoPlay() bool {
 	}
 	a.mu.Lock()
 	ok := !a.quitting && a.busy == "" && a.hostCancel == nil && a.joinCancel == nil &&
-		a.statusErr == nil && a.status != nil && a.status.Host == nil
+		a.statusErr == nil && a.status != nil && a.status.Host == nil &&
+		a.status.Maintenance == nil // während der Wartung startet kein PC von selbst
 	ending := a.ending
 	var (
 		ctx    context.Context

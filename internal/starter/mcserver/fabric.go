@@ -130,6 +130,9 @@ func (f *fabric) Prepare(ctx context.Context, in PrepareInput) error {
 		return fmt.Errorf("mcserver: Mods: %w", err)
 	}
 
+	// Konfigdateien: Fehler hier halten den Serverstart nicht auf.
+	applyConfigs(cfg.dir, in.Paths.Configs)
+
 	// server.properties schon jetzt, damit der Ordner vollständig ist; Start
 	// schreibt sie mit neuem RCON-Passwort noch einmal.
 	pw, err := randomPassword()

@@ -4,6 +4,8 @@
 //	wanderwelt-koordinator serve --config PATH
 //	wanderwelt-koordinator world activate --config PATH --world ID
 //	wanderwelt-koordinator mitglied neu|entfernen|liste … (mitglied.go)
+//	wanderwelt-koordinator wartung start|ende|status … (wartung.go)
+//	wanderwelt-koordinator sicherung <ziel> (sicherung.go)
 package main
 
 import (
@@ -48,6 +50,10 @@ func main() {
 		os.Exit(worldActivate(args[2:]))
 	case len(args) >= 1 && args[0] == "mitglied":
 		os.Exit(mitglied(args[1:], execRunner{}, os.Stdout, os.Stderr))
+	case len(args) >= 1 && args[0] == "wartung":
+		os.Exit(wartungMain(args[1:], realWartungEnv(), os.Stdout, os.Stderr))
+	case len(args) >= 1 && args[0] == "sicherung":
+		os.Exit(sicherungMain(args[1:], realWartungEnv(), os.Stdout, os.Stderr))
 	case len(args) >= 1 && (args[0] == "help" || args[0] == "-h" || args[0] == "--help"):
 		usage()
 		os.Exit(0)
@@ -63,7 +69,7 @@ func usage() {
       startet den Koordinator
   wanderwelt-koordinator world activate --config PATH --world ID
       macht eine archivierte Welt wieder zur Gruppenwelt (Koordinator vorher stoppen)
-`+mitgliedUsage)
+`+mitgliedUsage+wartungUsage+sicherungUsage)
 }
 
 func serve(args []string) int {
@@ -143,6 +149,7 @@ func run(cfgPath string) error {
 			case <-hup:
 				srv.ReloadMembers(ctx, cfgPath)
 				srv.ReloadManifest()
+				srv.ReloadWartung()
 			}
 		}
 	}()

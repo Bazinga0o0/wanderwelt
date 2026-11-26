@@ -145,6 +145,13 @@ func Open(dir string, budget int64) (*Store, error) {
 	if budget <= 0 {
 		return nil, fmt.Errorf("store: Budget muss positiv sein, ist %d", budget)
 	}
+	// Zuerst die Format-Version: Ein zu neuer Speicher wird nicht angefasst.
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, fmt.Errorf("store: %w", err)
+	}
+	if err := migrate(dir); err != nil {
+		return nil, err
+	}
 	for _, sub := range []string{"blobs", "tmp", "worlds"} {
 		if err := os.MkdirAll(filepath.Join(dir, sub), 0o755); err != nil {
 			return nil, fmt.Errorf("store: %w", err)

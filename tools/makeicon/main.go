@@ -6,12 +6,16 @@
 //
 //	go run ./tools/makeicon
 //
+// Mit -png datei.png entsteht stattdessen nur das Symbol als 1024x1024-PNG
+// (Art Asset für die Discord-Anzeige).
+//
 // (oder go generate ./cmd/wanderwelt). Ohne Werkzeuge außerhalb von Go.
 package main
 
 import (
 	"bytes"
 	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -33,7 +37,23 @@ func main() {
 	}
 }
 
+// discordPNG: Kantenlänge des PNG für das Discord-Art-Asset.
+const discordPNG = 1024
+
+// discordPNGBytes ist das Symbol als quadratisches PNG (Art Asset in der
+// Discord-Anwendung, docs/discord-einrichtung.md).
+func discordPNGBytes() []byte { return symbol.PNG(symbol.Render(discordPNG)) }
+
 func run() error {
+	pngPath := flag.String("png", "", "nur das Symbol als 1024x1024-PNG nach diesem Pfad schreiben (für Discord)")
+	flag.Parse()
+	if *pngPath != "" {
+		if err := os.WriteFile(*pngPath, discordPNGBytes(), 0o644); err != nil {
+			return err
+		}
+		fmt.Println(*pngPath)
+		return nil
+	}
 	root, err := moduleRoot()
 	if err != nil {
 		return err

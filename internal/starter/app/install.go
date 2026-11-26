@@ -43,6 +43,13 @@ func (a *App) install(ctx context.Context) error {
 		me  *api.Me
 		err error
 	)
+	if a.needsJoinOffer() {
+		// Ohne Gruppe: Beitritt über Discord anbieten (Adressen aus dem
+		// Geheimnis, erst nach Bestätigung); sonst Gruppendatei wie gewohnt.
+		if inv := a.discordJoinOffer(ctx); inv != nil {
+			a.invite = inv
+		}
+	}
 	if a.invite != nil {
 		// Gruppen-Build: Token einfügen, ggf. Beitritt anfragen.
 		g, me, err = a.chooseGroupInvite(ctx)

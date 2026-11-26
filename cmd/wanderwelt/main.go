@@ -6,6 +6,7 @@
 //	wanderwelt.exe fenster    das wanderwelt-Fenster (startet die Instanz, wenn nötig)
 //	wanderwelt.exe import [-ja] [-ohne-spielerdatei] <weltordner>
 //	                          Einzelspieler-Welt zur Gruppenwelt machen (wie „Welt übernehmen …“)
+//	wanderwelt.exe discord-<ID>://…   wie ohne Argument (Discord startet so für „Beitreten“)
 //	wanderwelt.exe version
 //
 // Versteckte Prüfhilfen: deps-check (Abhängigkeiten laden), winsys-check
@@ -26,6 +27,7 @@ import (
 	"os"
 	"os/signal"
 	"sort"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -68,6 +70,9 @@ flags:
 	cmd := ""
 	if len(args) > 0 {
 		cmd = args[0]
+		if strings.HasPrefix(cmd, "discord-") { // Discord startet uns über discord-<ID>://… („Beitreten“)
+			cmd = ""
+		}
 	}
 	switch cmd {
 	case "", "run":

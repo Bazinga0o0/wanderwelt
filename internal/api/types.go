@@ -91,6 +91,24 @@ type Status struct {
 	RestorePending    *RestoreNotice `json:"restore_pending,omitempty"`
 	// Handover: laufende Übergabe des Hosts an einen neuen Starter.
 	Handover *HandoverState `json:"handover,omitempty"`
+	// Maintenance: Wartung am Server (angekündigt oder laufend); nil ohne.
+	Maintenance *Maintenance `json:"maintenance,omitempty"`
+	// Members: Zahl der Gruppenmitglieder (ohne offene Beitrittsanfragen, ohne
+	// Namen); 0: ältere Koordinatoren kennen das Feld nicht.
+	Members int `json:"members,omitempty"`
+}
+
+// Maintenance beschreibt eine Wartung am Server, die der Admin mit
+// „wanderwelt-koordinator wartung start“ ausgelöst hat. Since: seit wann
+// Spielen abgelehnt wird, StopAt: wann der Host stoppen muss. RemainingS:
+// Sekunden bis StopAt nach der Uhr des Koordinators (die Uhr eines PCs kann
+// abweichen; ältere Koordinatoren kennen das Feld nicht: 0 bei vergangenem
+// StopAt, sonst aus StopAt abzuleiten).
+type Maintenance struct {
+	Reason     string    `json:"reason"`
+	StopAt     time.Time `json:"stop_at"`
+	Since      time.Time `json:"since"`
+	RemainingS int64     `json:"remaining_s"`
 }
 
 // Me beschreibt das anfragende Mitglied.
@@ -208,6 +226,9 @@ type Manifest struct {
 	FabricServer     Artifact   `json:"fabric_server" yaml:"fabric_server"`
 	Tunnel           Artifact   `json:"tunnel" yaml:"tunnel"`
 	Mods             []Artifact `json:"mods" yaml:"mods"`
+	// Configs sind Konfigdateien für den Server-Ordner (optional), siehe
+	// ConfigFile.
+	Configs []ConfigFile `json:"configs,omitempty" yaml:"configs,omitempty"`
 	// Starter ist die aktuelle Version des Starters (Selbst-Update); nil:
 	// keine. Der Koordinator liefert den Eintrag nur aus, wenn er beim
 	// Start oder Neuladen die Datei gefunden und den Hash geprüft hat.
@@ -328,6 +349,9 @@ type HeartbeatResponse struct {
 	Restore *RestoreNotice `json:"restore,omitempty"`
 	// Handover: laufende Übergabe, für den alten Host.
 	Handover *HandoverState `json:"handover,omitempty"`
+	// Maintenance: Wartung am Server; der Host sagt sie an und stoppt zu
+	// StopAt sauber (Schluss-Stand, Zuschlag zurück), ohne Übergabe.
+	Maintenance *Maintenance `json:"maintenance,omitempty"`
 	// MainPort: der neue Host soll jetzt auch den Haupt-Port öffnen.
 	MainPort bool `json:"main_port,omitempty"`
 	// MembersVersion ändert sich, wenn Mitglieder oder Rollen sich ändern

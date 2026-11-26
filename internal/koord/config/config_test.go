@@ -317,3 +317,52 @@ func wantEmptyTimeout(want time.Duration) func(t *testing.T, c *Config) {
 		}
 	}
 }
+
+func TestLoadManifestConfigs(t *testing.T) {
+	h := "sha256:" + strings.Repeat("0", 64)
+	write := func(configs string) string {
+		p := filepath.Join(t.TempDir(), "manifest.yaml")
+		if err := os.WriteFile(p, []byte("minecraft_version: \"26.2\"\n"+configs), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+
+	// Ohne configs wie bisher.
+	m, err := LoadManifest(write(""))
+	if err != nil || len(m.Configs) != 0 {
+		t.Fatalf("ohne configs: %v %+v", err, m)
+	}
+
+	m, err = LoadManifest(write(`configs:
+  - path: config/viper_spawn_control.json
+    url: "wanderwelt:viper_spawn_control.json"
+    hash: "` + h + `"
+  - path: config/x.toml
+    url: "https://example.org/x.toml"
+    hash: "` + h + `"
+    mode: default
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(m.Configs) != 2 || m.Configs[0].EffectiveMode() != "enforce" || m.Configs[1].Mode != "default" ||
+		m.Configs[0].Path != "config/viper_spawn_control.json" {
+		t.Fatalf("falsch gelesen: %+v", m.Configs)
+	}
+
+	for name, y := range map[string]string{
+		"Pfad nach oben":        "configs:\n  - {path: config/../eula.txt, url: \"wanderwelt:a\", hash: \"" + h + "\"}\n",
+		"absolut":               "configs:\n  - {path: /etc/a.json, url: \"wanderwelt:a\", hash: \"" + h + "\"}\n",
+		"Endung":                "configs:\n  - {path: config/a.jar, url: \"wanderwelt:a\", hash: \"" + h + "\"}\n",
+		"Modus":                 "configs:\n  - {path: config/a.json, url: \"wanderwelt:a\", hash: \"" + h + "\", mode: x}\n",
+		"unbekannter Schlüssel": "configs:\n  - {path: config/a.json, url: \"wanderwelt:a\", hash: \"" + h + "\", sha256: x}\n",
+	} {
+		_, err := LoadManifest(write(y))
+		if err == nil {
+			t.Errorf("%s: kein Fehler", name)
+		} else if name != "unbekannter Schlüssel" && !strings.Contains(err.Error(), "configs[1]") {
+			t.Errorf("%s: Meldung ohne Eintragsnummer: %v", name, err)
+		}
+	}
+}

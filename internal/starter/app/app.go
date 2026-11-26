@@ -42,6 +42,7 @@ import (
 
 	"github.com/Bazinga0o0/wanderwelt/internal/api"
 	"github.com/Bazinga0o0/wanderwelt/internal/starter/client"
+	"github.com/Bazinga0o0/wanderwelt/internal/starter/discord"
 	"github.com/Bazinga0o0/wanderwelt/internal/starter/fensterapi"
 	"github.com/Bazinga0o0/wanderwelt/internal/starter/group"
 	"github.com/Bazinga0o0/wanderwelt/internal/starter/host"
@@ -201,6 +202,13 @@ type App struct {
 	joinMu       sync.Mutex   // serialisiert beitrittsHinweis
 	notfall      notfallState // Notfallkopie (notfallkopie.go)
 
+	// presence: Discord-Anzeige (anzeige.go); nil: aus (Tests).
+	presence discord.Presence
+	// joinCh: ein Beitritts-Geheimnis aus Discord, solange es noch keine
+	// Gruppe gibt (beitritt_discord.go). joinLogged: nur der Discord-Loop.
+	joinCh     chan string
+	joinLogged bool
+
 	refreshCh chan struct{}
 	playCh    chan struct{}
 	quitCh    chan struct{}
@@ -274,7 +282,13 @@ func Run(opts Options) int {
 		refreshCh: make(chan struct{}, 1),
 		playCh:    make(chan struct{}, 1),
 		quitCh:    make(chan struct{}),
+		joinCh:    make(chan string, 1),
 	}
+	// Discord-Anzeige: früh verbinden (auch vor der Einrichtung), damit ein
+	// Klick auf „Beitreten“ ankommt. Aus (Noop), solange keine Client-ID steht.
+	a.presence = discord.New(discord.Options{ClientID: discord.ClientID, Logf: log.Printf, OnJoin: a.onDiscordJoin})
+	a.presence.Listen()
+	defer a.discordClose()
 
 	// Notfallkopie: bricht ab, wenn jemand den Platz braucht; Kopie auch nach
 	// nachgereichten Ständen.
@@ -343,6 +357,8 @@ func Run(opts Options) int {
 	go a.statusLoop()
 	go a.dauerbetriebLoop()
 	go a.presenceLoop()
+	a.registerDiscordProtocol()
+	go a.discordLoop()
 	go a.selfUpdateLoop()
 	if freshInstall {
 		a.prefetch()
@@ -355,6 +371,7 @@ func Run(opts Options) int {
 	a.finishHosting(hostEndWait)
 	// Eine laufende Notfallkopie nicht abwürgen (höchstens notfallEndWait).
 	a.waitNotfall(notfallEndWait)
+	a.discordClose()
 	a.shutdownBackground()
 	log.Printf("wanderwelt beendet")
 	return 0

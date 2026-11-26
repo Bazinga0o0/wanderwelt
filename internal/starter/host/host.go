@@ -138,6 +138,9 @@ const (
 	restoreDelay    = 30 * time.Second
 	restoreDelayMax = 5 * time.Minute
 	restoreWarn     = 10 * time.Second
+	// maintMinDelay: Auch bei Frist 0 vergeht so viel Zeit zwischen Ansage
+	// und Stopp, damit die Ansage noch ankommt (weitere Ansagen: maintWarnAt).
+	maintMinDelay = 3 * time.Second
 	// sayTimeout begrenzt eine Ansage im Chat.
 	sayTimeout = 15 * time.Second
 	// membersTimeout begrenzt einen Abgleich von Whitelist und Ops
@@ -246,6 +249,28 @@ func (e *RestoreError) Unwrap() error { return ErrRestore }
 func RestoreTime(n api.RestoreNotice) string {
 	return n.TargetCreated.In(time.Local).Format("15:04")
 }
+
+// ErrMaintenance: Run hat die Sitzung sauber beendet (Schluss-Stand
+// eingereicht, Zuschlag zurück), weil der Koordinator in Wartung geht. Es
+// folgt keine Übergabe und kein neuer Start: Spielen wird bis zum Ende der
+// Wartung abgelehnt. Run liefert dann *MaintenanceError.
+var ErrMaintenance = errors.New("Wartung am Server")
+
+// MaintenanceError ist das Ergebnis von Run nach einem Ende wegen Wartung;
+// Maintenance ist die Ansage des Koordinators (Grund).
+type MaintenanceError struct {
+	Maintenance api.Maintenance
+}
+
+func (e *MaintenanceError) Error() string {
+	return "Wartung am Server: " + cmp.Or(e.Maintenance.Reason, "ohne Angabe")
+}
+
+func (e *MaintenanceError) Unwrap() error { return ErrMaintenance }
+
+// maintWarnAt sind die Zeiten vor dem Stopp, zu denen weitere Ansagen
+// kommen (absteigend; nur wenn die Frist länger ist).
+var maintWarnAt = []time.Duration{time.Minute, 10 * time.Second}
 
 // Clock ist die Uhr der Sitzung (im Test eine Fake-Uhr). After liefert
 // einen Kanal, der nach d die Zeit liefert.
@@ -501,6 +526,15 @@ type Session struct {
 	restoreWarnAt time.Time
 	restoreAt     time.Time
 	restoreEnd    bool
+
+	// Wartung (onMaintenanceNotice): maint ist die zuletzt angenommene
+	// Notice (nil: keine), maintAt der Stopp (Null: keiner geplant),
+	// maintWarns die noch ausstehenden Ansagen (aufsteigend), maintEnd: Das
+	// Ende kam von der Wartung (Run liefert dann *MaintenanceError).
+	maint      *api.Maintenance
+	maintAt    time.Time
+	maintWarns []time.Time
+	maintEnd   bool
 
 	// members: Whitelist und Ops, wie der laufende Server sie hat (aus den
 	// Host-Einstellungen des Starts und jedem Abgleich); membersSeen: die
@@ -814,6 +848,9 @@ func (s *Session) loop() error {
 	if s.result == nil && s.restoreEnd {
 		return &RestoreError{Notice: *s.restore}
 	}
+	if s.result == nil && s.maintEnd {
+		return &MaintenanceError{Maintenance: *s.maint}
+	}
 	return s.result
 }
 
@@ -867,6 +904,17 @@ func (s *Session) step(now time.Time) {
 		s.restoreEnd = true
 		s.requestEnd(fmt.Sprintf("%s holt einen älteren Stand zurück", cmp.Or(s.restore.By, "ein Admin")))
 		return
+	}
+	if !s.maintAt.IsZero() && !now.Before(s.maintAt) {
+		s.maintAt, s.maintWarns = time.Time{}, nil
+		s.maintEnd = true
+		s.requestEnd("Wartung am Server: " + s.maint.Reason)
+		return
+	}
+	for len(s.maintWarns) > 0 && !now.Before(s.maintWarns[0]) {
+		left := max(s.maintAt.Sub(now).Round(time.Second), time.Second)
+		s.maintWarns = s.maintWarns[1:]
+		s.say("Wartung: Server stoppt in " + maintDuration(left))
 	}
 	if !s.restoreWarnAt.IsZero() && !now.Before(s.restoreWarnAt) {
 		s.restoreWarnAt = time.Time{}
@@ -942,6 +990,10 @@ func (s *Session) nextWake() time.Time {
 		}
 		add(s.restoreWarnAt)
 		add(s.restoreAt)
+		add(s.maintAt)
+		if len(s.maintWarns) > 0 {
+			add(s.maintWarns[0])
+		}
 		s.hoWake(add)
 		// Bereitschaft melden, sobald tunnel steht; läuft gerade ein
 		// Lebenszeichen, weckt dessen Ergebnis die Schleife (sonst stünde
@@ -1300,6 +1352,14 @@ func (s *Session) onStarted(r startResult) {
 		s.beginStop()
 		return
 	}
+	if s.maint != nil {
+		// Wie beim Zurückholen: Noch spielt niemand, also gleich sauber
+		// beenden.
+		s.maintEnd, s.ending = true, true
+		log.Printf("host: Ende: Wartung am Server (%s) – der Server wird gleich nach dem Start wieder gestoppt", s.maint.Reason)
+		s.beginStop()
+		return
+	}
 	s.phase = phHosting
 	if r.snapEvery > 0 {
 		s.snapEvery = r.snapEvery
@@ -1416,6 +1476,9 @@ func (s *Session) onHeartbeat(sentAt time.Time, resp *api.HeartbeatResponse, err
 		if resp != nil && resp.Restore != nil {
 			s.onRestoreNotice(*resp.Restore)
 		}
+		if resp != nil && resp.Maintenance != nil {
+			s.onMaintenanceNotice(*resp.Maintenance)
+		}
 		if resp != nil {
 			if resp.MainPort {
 				s.openMainPort()
@@ -1499,7 +1562,7 @@ func (s *Session) onPlayers(names []string, err error) {
 // ändert sich nichts – der Koordinator holt den Stand nach der Freigabe
 // zurück.
 func (s *Session) onRestoreNotice(n api.RestoreNotice) {
-	if s.restore != nil {
+	if s.restore != nil || s.maint != nil {
 		return
 	}
 	s.restore = &n
@@ -1525,6 +1588,72 @@ func (s *Session) onRestoreNotice(n api.RestoreNotice) {
 	default:
 		log.Printf("host: Die Sitzung endet bereits")
 	}
+}
+
+// ---- Wartung ----
+
+// onMaintenanceNotice: Ein Lebenszeichen meldet eine Wartung am Server. Der
+// Koordinator schickt sie mit jedem Lebenszeichen; zählt eine Notice mit
+// neuem StopAt, ersetzt sie die bisherige (der Admin hat die Frist
+// geändert). War der Server schon bereit, kommt sofort die Ansage („Wartung:
+// Server stoppt in N Sekunden – Grund“), vor dem Stopp bei 60 und 10 s
+// weitere, und zu StopAt endet die Sitzung sauber – ohne Übergabe, mit
+// Schluss-Stand und Rückgabe des Zuschlags. Eine Frist von 0 gibt trotzdem
+// maintMinDelay Zeit für die Ansage. Läuft der Server noch nicht (Start,
+// nicht bereit), endet die Sitzung sofort ohne Ansage; endet sie ohnehin
+// schon oder läuft ein Zurückholen, ändert sich nichts. Die Frist rechnet
+// der Host aus RemainingS (Uhr des Koordinators) von seiner eigenen Uhr aus.
+func (s *Session) onMaintenanceNotice(n api.Maintenance) {
+	if s.restore != nil || s.maintEnd || (s.maint != nil && s.maint.StopAt.Equal(n.StopAt)) {
+		return
+	}
+	first := s.maint == nil
+	s.maint = &n
+	log.Printf("host: Wartung am Server (%s): Stopp in %d s", n.Reason, n.RemainingS)
+	switch {
+	case s.active() && !s.readyNotified:
+		s.maintEnd = true
+		s.requestEnd("Wartung am Server (" + n.Reason + ") – der Server war noch nicht bereit")
+	case s.active():
+		delay := max(time.Duration(n.RemainingS)*time.Second, maintMinDelay)
+		now := s.clk.Now()
+		s.maintAt = now.Add(delay)
+		s.maintWarns = nil
+		for _, w := range maintWarnAt {
+			if delay > w {
+				s.maintWarns = append(s.maintWarns, s.maintAt.Add(-w))
+			}
+		}
+		s.say(maintAnnouncement(n, delay, first))
+		log.Printf("host: Ende in %v", delay)
+	case s.phase == phStarting && !s.ending && s.fenced == nil:
+		log.Printf("host: Der Server startet noch – er wird gleich nach dem Start wieder gestoppt")
+	default:
+		log.Printf("host: Die Sitzung endet bereits")
+	}
+}
+
+// maintDuration ist die Frist für die Ansage: Sekunden, ab zwei Minuten
+// Minuten.
+func maintDuration(d time.Duration) string {
+	if d >= 2*time.Minute {
+		return fmt.Sprintf("%d Minuten", int((d+30*time.Second)/time.Minute))
+	}
+	return fmt.Sprintf("%d Sekunden", d/time.Second)
+}
+
+// maintAnnouncement ist die Ansage im Chat, etwa „Wartung: Server stoppt in
+// 60 Sekunden – Update des Koordinators. Danach ist Spielen gleich wieder
+// möglich.“ Eine geänderte Frist heißt „Frist geändert“.
+func maintAnnouncement(n api.Maintenance, delay time.Duration, first bool) string {
+	text := "Wartung: Server stoppt in " + maintDuration(delay)
+	if !first {
+		text = "Wartung (Frist geändert): Server stoppt in " + maintDuration(delay)
+	}
+	if n.Reason != "" {
+		text += " – " + n.Reason
+	}
+	return text + ". Danach ist Spielen gleich wieder möglich."
 }
 
 // noticeDelay ist die Frist bis zum Ende: DelayS der Notice, ohne

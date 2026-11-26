@@ -365,6 +365,26 @@ func BeendenText(hosting bool) (label, hinweis string) {
 	return "Nicht mehr mitspielen", "Minecraft schließt du selbst; wanderwelt übernimmt dann nicht mehr automatisch"
 }
 
+// WartungTray ist die Zeile im Tooltip des Trays während einer Wartung am
+// Server (angekündigt oder laufend).
+const WartungTray = "Wartung am Server – Spielen ist gleich wieder möglich"
+
+// WartungText beschreibt eine Wartung für das Fenster: Titel und Text.
+// jetzt ist die Zeit für „der Host stoppt um …“ (nur vor dem Stopp).
+func WartungText(m *api.Maintenance, jetzt time.Time) (titel, text string) {
+	text = "Spielen ist gleich wieder möglich."
+	if m == nil {
+		return "Wartung am Server", text
+	}
+	if m.Reason != "" {
+		text = "Grund: " + m.Reason + ". " + text
+	}
+	if !m.StopAt.IsZero() && m.StopAt.After(jetzt) {
+		text += " Wer hostet, stoppt um " + m.StopAt.Local().Format("15:04") + " den Server sauber."
+	}
+	return "Wartung am Server", text
+}
+
 // AndereSpieler sind die online Spieler ohne own (den eigenen Minecraft-
 // Namen, ohne Rücksicht auf Groß- und Kleinschreibung).
 func AndereSpieler(players []string, own string) []string {

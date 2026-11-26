@@ -561,6 +561,18 @@ func (a *App) hostEnded(err error, pending, saved, dauer bool) {
 	case err == nil:
 		a.setPhase(phReady, "")
 		go notify("Hosten beendet – der Stand ist hochgeladen.")
+	case errors.Is(err, host.ErrMaintenance):
+		// Sauber beendet, Stand hochgeladen. Kein neuer Start: Der
+		// Koordinator lehnt Spielen bis zum Ende der Wartung ab, auch der
+		// Dauerbetrieb wartet (autoPlay). Das Ende der Wartung meldet der
+		// Status (pollStatus).
+		text := "Wartung am Server – der Stand ist hochgeladen. Spielen ist gleich wieder möglich."
+		if me, ok := errors.AsType[*host.MaintenanceError](err); ok && me.Maintenance.Reason != "" {
+			text = "Wartung am Server (" + me.Maintenance.Reason + ") – der Stand ist hochgeladen. Spielen ist gleich wieder möglich."
+		}
+		a.setPhase(phReady, "")
+		go notify(text)
+		go a.pollStatus(false)
 	case errors.Is(err, host.ErrRestore):
 		// Sauber beendet; der Koordinator legt den zurückgeholten Stand nach
 		// der Freigabe als Head an. Gleich neu fragen (dieser PC ist weiter

@@ -166,6 +166,8 @@ func (a *App) updateTray(m *trayMenu) {
 		line2 = "Koordinator nicht erreichbar"
 	case status == nil:
 		line2 = ""
+	case status.Maintenance != nil:
+		line2 = fensterapi.WartungTray
 	case status.Handover != nil:
 		line2 = fensterapi.UebergabeText(status.Handover)
 	case status.Host == nil:
@@ -275,6 +277,7 @@ func (a *App) pollStatus(refreshMe bool) {
 	if err == nil && a.statusErr != nil {
 		a.kickRecoverLocked() // wieder erreichbar: Vorgemerktes gleich nachreichen
 	}
+	wartungVorbei := err == nil && st.Maintenance == nil && a.status != nil && a.status.Maintenance != nil
 	a.status, a.statusErr = st, err
 	// Mitspieler, aber niemand hostet mehr: wieder bereit (solange watchJoin
 	// läuft, entscheidet das dort, ob neu gefragt wird).
@@ -282,6 +285,10 @@ func (a *App) pollStatus(refreshMe bool) {
 		a.phase, a.detail = phReady, ""
 	}
 	a.mu.Unlock()
+	if wartungVorbei {
+		log.Printf("Wartung am Server vorbei")
+		go notify("Wartung vorbei, ihr könnt wieder spielen.")
+	}
 	if needMe && err == nil {
 		if me, err := c.Me(ctx); err == nil {
 			a.mu.Lock()

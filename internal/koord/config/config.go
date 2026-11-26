@@ -208,6 +208,9 @@ func LoadManifest(path string) (*api.Manifest, error) {
 	if m.MinecraftVersion == "" {
 		return nil, fmt.Errorf("%s: minecraft_version fehlt", path)
 	}
+	if err := api.ValidateConfigs(m.Configs); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
 	return &m, nil
 }
 

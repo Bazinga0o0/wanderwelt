@@ -386,3 +386,14 @@ func TestMojangNegativeCache(t *testing.T) {
 		t.Fatalf("%d Anfragen, erwartet 4 (abgebrochene Anfrage nicht gemerkt)", n)
 	}
 }
+
+// Status nennt die Zahl der Gruppenmitglieder (Discord-Party), keine Namen.
+func TestStatusMembers(t *testing.T) {
+	srv, _, _ := newServer(t, "dev")
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+	st := getStatus(t, ts.URL, userA)
+	if st.Members < 2 {
+		t.Errorf("Members = %d, erwartet mindestens userA und userB", st.Members)
+	}
+}

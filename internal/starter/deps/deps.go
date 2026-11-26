@@ -44,6 +44,29 @@ type Paths struct {
 	FabricServerJar string
 	Tunnel          string
 	Mods            []string // in Manifest-Reihenfolge, ohne übersprungene
+	// Configs sind die geladenen und geprüften Konfigdateien aus dem
+	// Manifest (configs); schlug eine fehl, fehlt sie hier (nur geloggt).
+	Configs []ConfigPath
+}
+
+// ConfigPath ist eine fertig geladene Konfigdatei: Path relativ zum
+// Server-Ordner (mit "/"), Src die geprüfte Datei im Cache, Hash der
+// erwartete Hash ("sha256:…"/"sha512:…"), Mode "enforce" oder "default".
+type ConfigPath struct {
+	Path string
+	Src  string
+	Hash string
+	Mode string
+}
+
+// maxConfigBytes begrenzt eine Konfigdatei.
+const maxConfigBytes int64 = 1 << 20
+
+// FileHashMatches meldet, ob die Datei p den Hash want ("sha256:<hex>" oder
+// "sha512:<hex>") hat; false auch bei unlesbarer Datei oder ungültigem Hash.
+func FileHashMatches(p, want string) bool {
+	w, err := parseHash(want)
+	return err == nil && fileMatches(p, w)
 }
 
 // ArtifactSource liefert Artefakte mit der URL wanderwelt:<name> vom
@@ -129,7 +152,36 @@ func Ensure(ctx context.Context, m *api.Manifest, profile api.Profile, src Artif
 		}
 		p.Mods = append(p.Mods, mp)
 	}
+	p.Configs = ensureConfigs(ctx, m.Configs, src, f)
 	return &p, nil
+}
+
+// ensureConfigs lädt die Konfigdateien in den Cache <Home>/deps/config-<n>/.
+// Ungültige Einträge und Fehler (Download, Hash) beenden nichts: Sie werden
+// geloggt, die Datei fehlt dann im Ergebnis, und der Server startet ohne sie.
+func ensureConfigs(ctx context.Context, cfgs []api.ConfigFile, src ArtifactSource, base *fetcher) []ConfigPath {
+	if len(cfgs) == 0 {
+		return nil
+	}
+	f := &fetcher{base: base.base, progress: base.progress, src: src, limit: maxConfigBytes}
+	var out []ConfigPath
+	for i, c := range cfgs {
+		if ctx.Err() != nil {
+			break
+		}
+		if err := api.ValidateConfigs([]api.ConfigFile{c}); err != nil {
+			log.Printf("deps: Konfigdatei %s wird übersprungen: %v", c.Path, err)
+			continue
+		}
+		a := api.Artifact{Name: fmt.Sprintf("config-%d", i+1), URL: c.URL, Hash: c.Hash}
+		mp, err := f.ensureFile(ctx, a, path.Base(c.Path))
+		if err != nil {
+			log.Printf("deps: Konfigdatei %s nicht geladen, der Server startet ohne diese Vorgabe: %v", c.Path, err)
+			continue
+		}
+		out = append(out, ConfigPath{Path: c.Path, Src: mp, Hash: c.Hash, Mode: c.EffectiveMode()})
+	}
+	return out
 }
 
 // FetchFile legt das Artefakt a als dir/fileName ab (Selbst-Update des

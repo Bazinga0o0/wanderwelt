@@ -509,6 +509,48 @@ Ein ausstehendes Zurückholen (ein Admin hat einen Stand zurückgeholt,
 während jemand hostet) steht nur im Speicher und übersteht einen Neustart
 des Koordinators nicht; danach den Stand im Fenster noch einmal zurückholen.
 
+### Wartung und Sicherung für ein Update
+
+Für ein Update beendet der Admin das Hosten vom Server aus (nur über den
+Befehl, nicht im Fenster). Auf dem Mini-Server als root:
+
+```
+wanderwelt-koordinator wartung start --in 60s --grund "Update 0.2.0"
+wanderwelt-koordinator sicherung /var/lib/wanderwelt-sicherung-20261126
+# Programm austauschen, systemctl restart wanderwelt-koordinator, prüfen
+wanderwelt-koordinator wartung ende
+```
+
+- `wartung start`: Ab sofort lehnt der Koordinator „Spielen“ mit dem Grund ab
+  (auch Hochladen und Host-Übergaben). Der Host sagt im Chat an („Wartung:
+  Server stoppt in 60 Sekunden – Update 0.2.0 …“, weitere Ansagen 60 und 10 s
+  vor dem Stopp), stoppt nach `--in` sauber (Schluss-Stand, Zuschlag zurück)
+  und gibt nichts weiter; `--in 0s` gibt der Ansage 3 s. Alle Starter zeigen
+  „Wartung am Server – Spielen ist gleich wieder möglich“ im Tray und im
+  Fenster; Dauerbetrieb-PCs starten nicht von selbst. Hostet ein älterer
+  Starter weiter, entzieht der Koordinator ihm nach `--in` + 60 s den Zuschlag.
+- Der Befehl wartet bis `--frist` (Standard 5 min) nach Ablauf der Ansage, bis
+  kein Zuschlag und kein Upload mehr besteht, und meldet „Bereit für das
+  Update“. Hängt noch jemand, endet er mit Ausgang 3 und nennt, wer.
+  `--nicht-warten` kündigt nur an; `wartung status` zeigt den Stand.
+- Der Zustand steht in `<data_dir>/wartung.json` und übersteht einen Neustart;
+  der Koordinator liest ihn alle 5 s und bei `reload` (der Bericht dazu:
+  `wartung-bericht.json`). Solange die Wartung läuft, räumt der stündliche
+  Aufräumlauf nur als Probe auf: Das Log nennt in „AUFRÄUM-PROBE WÄHREND DER
+  WARTUNG“, was er löschen würde. Gelöscht wird erst wieder nach `wartung ende`
+  – ein Update mit neuen Aufbewahrungsregeln nimmt so nie unbemerkt Stände weg.
+- `wartung ende`: Spielen ist wieder möglich, die Starter melden „Wartung
+  vorbei, ihr könnt wieder spielen.“
+- `sicherung <ziel>` (bei gestopptem Dienst oder in der Wartung nach „bereit“):
+  Blobs als Hardlink (kein zusätzlicher Platz), Metadaten und Konfiguration
+  als echte Kopie, dazu `<ziel>/konfiguration/`. Das Ziel muss auf demselben
+  Dateisystem liegen. Rückweg: Dienst stoppen, altes Programm zurück,
+  `data_dir` wegsichern und die Sicherung als `data_dir` einsetzen.
+- Der Speicher trägt seine Format-Version (`store/format.json`). Beim Start
+  laufen ausstehende Migrationen vorwärts (nur Metadaten, nie Blobs); eine
+  unbekannte neuere Version startet nicht – dann das neuere Programm oder die
+  Sicherung davor benutzen.
+
 ### Host-Übergabe
 
 Drückt der Host „Spiel für mich beenden“, während andere spielen, kann die
@@ -859,6 +901,43 @@ Beim Start und bei jedem Neuladen prüft der Koordinator alle
 `wanderwelt:`-Einträge (Datei da, Hash passt) und meldet Abweichungen im Log
 (`journalctl -u wanderwelt-koordinator`, Zeile „ARTEFAKT AUS DEM MANIFEST
 NICHT AUSLIEFERBAR“) – so ein Eintrag verhindert jedes Hosten.
+
+### Konfigdateien im Manifest (`configs`)
+
+Der optionale Abschnitt `configs` verteilt Konfigdateien für den
+Server-Ordner, die auf allen Hosts gleich sein sollen (zum Beispiel
+`config/viper_spawn_control.json` der Server-Mod `viper-spawn-control`):
+
+```yaml
+configs:
+  - path: config/viper_spawn_control.json   # relativ zum Server-Ordner
+    url: "wanderwelt:viper_spawn_control.json"
+    hash: "sha256:HEX-AUS-SHA256SUM"
+    mode: enforce                           # oder default; ohne Angabe enforce
+```
+
+- `url` und `hash` wie bei den Mods (`https://…` oder `wanderwelt:<datei>`,
+  `sha256:` oder `sha512:`). Die Datei ablegen und den Hash bilden wie oben.
+- `mode: enforce` – der Starter schreibt die Datei bei jedem Start des
+  Servers neu, wenn sie fehlt oder ihr Hash abweicht (atomar über Temp-Datei
+  und Umbenennen). Lokale Änderungen gehen dabei verloren.
+- `mode: default` – der Starter legt die Datei nur an, wenn sie fehlt; der
+  Host darf sie danach lokal ändern.
+- `path` ist streng begrenzt: nur unterhalb von `config/`, mit `/` getrennt;
+  kein absoluter Pfad, kein `..`, keine Laufwerksbuchstaben, UNC-Pfade oder
+  Datenströme (`:`), höchstens 200 Zeichen; Endung nur `json`, `toml`,
+  `yaml`, `yml`, `properties`, `txt`, `cfg` oder `conf`. Dateien über 1 MiB
+  und mehr als 64 Einträge gehen nicht.
+- Ein ungültiger Eintrag lässt den Koordinator das Manifest beim Laden
+  ablehnen (wie jeden anderen Manifest-Fehler: beim Neuladen gilt der
+  bisherige Stand weiter, im Journal steht „VERSIONS-MANIFEST NICHT NEU
+  GELADEN“ mit dem Eintrag und dem Grund). Der Koordinator prüft außerdem
+  `wanderwelt:`-Dateien der Konfigs wie die anderen Artefakte.
+- Der Starter wendet die Konfigs nach dem Laden der Mods und vor dem
+  Serverstart an, nur im Server-Ordner dieses Hosts. Scheitert eine (Download,
+  Hash), steht das auf Deutsch im Log; der Server startet trotzdem.
+- Der Koordinator muss zuerst aktualisiert werden: Ein älterer kennt den
+  Schlüssel `configs` nicht und lädt so ein Manifest nicht.
 
 ### Starter-Update ausrollen
 

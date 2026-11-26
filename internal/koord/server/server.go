@@ -38,6 +38,7 @@ import (
 	"github.com/Bazinga0o0/wanderwelt/internal/koord/lease"
 	"github.com/Bazinga0o0/wanderwelt/internal/koord/portholder"
 	"github.com/Bazinga0o0/wanderwelt/internal/koord/store"
+	"github.com/Bazinga0o0/wanderwelt/internal/koord/wartung"
 )
 
 // MaxPartSize ist die größte Teilgröße beim Blob-Upload (32 MiB).
@@ -159,6 +160,13 @@ type Server struct {
 	// den Zuschlag; Lebenszeichen und Status lesen es ohne Sperre.
 	pending atomic.Pointer[pendingRestore]
 
+	// wartung ist der Wartungszustand (wartung.go): nil ohne Wartung. Er
+	// wird ganz ersetzt, nur unter phMu (oder im Aufbau); Lebenszeichen und
+	// Status lesen ihn ohne Sperre. wartungErr: der zuletzt geloggte Fehler
+	// beim Lesen (unter phMu).
+	wartung    atomic.Pointer[wartung.Zustand]
+	wartungErr string
+
 	// Host-Übergabe (handover.go). ho, repl, hoDirty und hoSeq ändern sich
 	// nur unter phMu; ho und repl lesen Lebenszeichen und Status ohne
 	// Sperre. commitMu ordnet Commit und die Meldung ready der Übergabe
@@ -246,6 +254,8 @@ func New(cfg *config.Config, lm *lease.Manager, st *store.Store, ph portholder.C
 	s.mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "unbekannter Endpunkt "+r.Method+" "+r.URL.Path)
 	})
+	// Eine laufende Wartung gilt gleich nach dem Start (sie steht in data_dir).
+	s.readWartungLocked()
 	return s
 }
 
@@ -270,6 +280,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (s *Server) ExpireTick(ctx context.Context) {
 	s.phMu.Lock()
 	defer s.phMu.Unlock()
+	s.wartungTickLocked(ctx)
 	if expired, account := s.lm.Expire(); expired {
 		s.log.Info("Zuschlag abgelaufen", "konto", account)
 		s.needClear = true
@@ -284,6 +295,20 @@ func (s *Server) ExpireTick(ctx context.Context) {
 // PruneTick wendet Aufbewahrung und Aufräumlauf des Speichers an.
 func (s *Server) PruneTick(context.Context) {
 	start := s.now()
+	if s.wartung.Load() != nil {
+		// Nach einem Update nur als Probe, bis „wartung ende“ (wartung.go).
+		rep, err := s.st.PruneProbe(start)
+		switch {
+		case err != nil:
+			s.log.Error("AUFRÄUM-PROBE FEHLGESCHLAGEN", "err", err)
+		case rep.Empty():
+			s.log.Info("Aufräum-Probe während der Wartung: nichts zu löschen")
+		default:
+			s.log.Warn("AUFRÄUM-PROBE WÄHREND DER WARTUNG – gelöscht wird erst nach „wartung ende“",
+				"stände", rep.Generations, "blobs", rep.Blobs, "bytes", rep.Bytes, "temp", rep.Junk)
+		}
+		return
+	}
 	if err := s.st.Prune(start); err != nil {
 		s.log.Error("AUFRÄUMEN DES SPEICHERS FEHLGESCHLAGEN", "err", err)
 		return
@@ -455,7 +480,9 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		SnapshotIntervalS: int(s.cfg.SnapshotInterval / time.Second),
 		RestorePending:    s.restoreNotice(),
 		Handover:          s.handoverState(s.ho.Load(), false),
+		Maintenance:       s.wartungNotice(),
 	}
+	st.Members = len(s.memberList())
 	if info, ok := s.lm.Info(); ok {
 		st.Host = publicHost(info.Host)
 		// Ein Zuschlag nur zum Hochladen hat keinen Server: nie bereit.
@@ -537,7 +564,11 @@ func (s *Server) handleArtifact(w http.ResponseWriter, r *http.Request) {
 // haben. Ergebnis sind die Befunde für das Log (leer: alles in Ordnung).
 func CheckArtifacts(dataDir string, m *api.Manifest) []string {
 	var out []string
-	for _, a := range append([]api.Artifact{m.Java, m.FabricServer, m.Tunnel}, m.Mods...) {
+	all := append([]api.Artifact{m.Java, m.FabricServer, m.Tunnel}, m.Mods...)
+	for _, c := range m.Configs {
+		all = append(all, api.Artifact{Name: c.Path, URL: c.URL, Hash: c.Hash})
+	}
+	for _, a := range all {
 		scheme, name, ok := strings.Cut(a.URL, ":")
 		if !ok || !strings.EqualFold(scheme, ArtifactScheme) {
 			continue
@@ -608,6 +639,12 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 	// Ist der Haupt-Zuschlag einer Übergabe zu Ende, wird der wartende
 	// befördert, bevor jemand einen neuen Zuschlag will.
 	s.handoverSettle(context.WithoutCancel(r.Context()))
+	// Während der Wartung startet niemand und spielt niemand mit; der
+	// Grund steht im Hinweis des Starters (wartung.go).
+	if reason := s.wartungReason(); reason != "" {
+		s.writePlay(w, lease.Grant{Role: api.RoleDenied}, reason)
+		return
+	}
 	// Während ein Zurückholen aussteht, startet niemand und spielt niemand
 	// mit: Der Host stoppt gleich, danach gibt es einen neuen Head.
 	if reason := s.restoreBlocksPlay(context.WithoutCancel(r.Context())); reason != "" {
@@ -882,6 +919,7 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	// Ältere Starter lesen den Körper nicht; sie prüfen nur auf 2xx.
 	resp := api.HeartbeatResponse{
 		Restore:        s.restoreNotice(),
+		Maintenance:    s.wartungNotice(),
 		MembersVersion: s.membersVersion.Load(),
 	}
 	if h := s.ho.Load(); h != nil && h.oldLease == req.LeaseID {

@@ -261,3 +261,29 @@ func TestManifestReloadDoesNotBlockRequests(t *testing.T) {
 		t.Fatalf("nach dem Neuladen: %+v", m)
 	}
 }
+
+// Ungültige configs beim Neuladen: Fehler, das bisherige Manifest gilt
+// weiter; gültige werden ausgeliefert.
+func TestManifestConfigsReload(t *testing.T) {
+	e := newManifestEnv(t, starterManifest("26.2", ""))
+	h := "sha256:" + strings.Repeat("0", 64)
+
+	writeFile(t, e.manifest, []byte(starterManifest("26.3",
+		"configs:\n  - {path: config/a.json, url: \"https://example.org/a.json\", hash: \""+h+"\"}\n")))
+	if err := e.srv.ReloadManifest(); err != nil {
+		t.Fatal(err)
+	}
+	m := e.get(t)
+	if m.MinecraftVersion != "26.3" || len(m.Configs) != 1 || m.Configs[0].Path != "config/a.json" {
+		t.Fatalf("configs nicht ausgeliefert: %+v", m)
+	}
+
+	writeFile(t, e.manifest, []byte(starterManifest("26.4",
+		"configs:\n  - {path: config/../server.properties, url: \"https://example.org/a\", hash: \""+h+"\"}\n")))
+	if err := e.srv.ReloadManifest(); err == nil || !strings.Contains(err.Error(), "config/") {
+		t.Fatalf("ungültiger Pfad: %v", err)
+	}
+	if m := e.get(t); m.MinecraftVersion != "26.3" || len(m.Configs) != 1 {
+		t.Fatalf("Manifest hat sich trotz Fehler geändert: %+v", m)
+	}
+}
