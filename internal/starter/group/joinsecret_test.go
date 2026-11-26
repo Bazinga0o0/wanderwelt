@@ -74,6 +74,12 @@ func TestDecodeJoinMuell(t *testing.T) {
 		long,
 		joinPrefix + strings.Repeat("A", 200),
 	}
+	// Ein gültiges Geheimnis, mit Zeichen versetzt, die der Base64-Decoder
+	// stillschweigend übergeht oder die nicht ins Alphabet gehören.
+	good := enc("a.example.org", "t.example.org:1", "", "")
+	for _, junk := range []string{"\n", "\r\n", " ", "%0A", "%41", "=", "+", "/", "\x00", "\u00e4"} {
+		bad = append(bad, good+junk, good[:6]+junk+good[6:], " "+good, "\n"+good)
+	}
 	for _, s := range bad {
 		if inv, err := DecodeJoin(s); err == nil {
 			t.Errorf("%q angenommen: %+v", s, inv)

@@ -70,7 +70,10 @@ type Zustand struct {
 	RAMTotalMB   int
 	Autostart    bool
 	Notfallkopie Notfallkopie
-	Hinweise     []Hinweis // die letzten 20, Seq aufsteigend
+	// Gruppencode: Beitritts-Code dieser Gruppe (nur öffentliche Adressen,
+	// nie ein Token) zum Weitergeben; leer: nicht möglich.
+	Gruppencode string
+	Hinweise    []Hinweis // die letzten 20, Seq aufsteigend
 }
 
 // Notfallkopie ist der Stand der Notfallkopie dieses PCs (Reiter Hosten).

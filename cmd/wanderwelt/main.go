@@ -6,7 +6,8 @@
 //	wanderwelt.exe fenster    das wanderwelt-Fenster (startet die Instanz, wenn nötig)
 //	wanderwelt.exe import [-ja] [-ohne-spielerdatei] <weltordner>
 //	                          Einzelspieler-Welt zur Gruppenwelt machen (wie „Welt übernehmen …“)
-//	wanderwelt.exe discord-<ID>://…   wie ohne Argument (Discord startet so für „Beitreten“)
+//	wanderwelt.exe wanderwelt://…     „Beitreten“-Seite: wie ohne Argument, öffnet dazu das
+//	                          Fenster; was hinter wanderwelt:// steht, wird nie ausgewertet
 //	wanderwelt.exe version
 //
 // Versteckte Prüfhilfen: deps-check (Abhängigkeiten laden), winsys-check
@@ -27,7 +28,6 @@ import (
 	"os"
 	"os/signal"
 	"sort"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -68,15 +68,18 @@ flags:
 		args = args[1:]
 	}
 	cmd := ""
+	joinLink := false
 	if len(args) > 0 {
 		cmd = args[0]
-		if strings.HasPrefix(cmd, "discord-") { // Discord startet uns über discord-<ID>://… („Beitreten“)
-			cmd = ""
+		// Jede Webseite kann wanderwelt://… auslösen: Das Argument trägt
+		// nichts und wird nie ausgewertet (egal wie lang oder kaputt).
+		if app.IsJoinLinkArg(cmd) {
+			cmd, joinLink = "", true
 		}
 	}
 	switch cmd {
 	case "", "run":
-		os.Exit(app.Run(app.Options{Version: version, Handoff: handoff, Updated: updated, Invite: gruppeEingebettet}))
+		os.Exit(app.Run(app.Options{Version: version, Handoff: handoff, Updated: updated, JoinLink: joinLink, Invite: gruppeEingebettet}))
 	case "play":
 		os.Exit(app.Run(app.Options{Version: version, Play: true, Handoff: handoff, Updated: updated, Invite: gruppeEingebettet}))
 	case "fenster":

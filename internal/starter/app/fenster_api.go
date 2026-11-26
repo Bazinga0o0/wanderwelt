@@ -347,6 +347,7 @@ func (a *App) zustand() fensterapi.Zustand {
 		z.HostAddr = a.me.MinecraftAddress
 	}
 	a.mu.Unlock()
+	z.Gruppencode = a.groupCode()
 	if p, err := bench.LoadProfile(); err == nil {
 		z.Profil = p
 	} else {

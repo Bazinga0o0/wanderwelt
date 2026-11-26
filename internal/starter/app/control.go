@@ -34,6 +34,9 @@ const (
 	// Fenster.
 	actionPlay = "play"
 	actionShow = "show"
+	// actionJoin: wanderwelt://beitreten wurde geöffnet; ohne Daten, öffnet
+	// nur das Fenster (beitritt_code.go).
+	actionJoin = "beitreten"
 	// actionImportCLI: „wanderwelt.exe import -ja <ordner>“ übergibt die Welt
 	// (Körper: importRequest), Ordner beliebig. „import“ ist die Aktion des
 	// Fensters: nur Speicherstände aus dem saves-Ordner.
@@ -93,7 +96,7 @@ func startControl(handle func(action string, body []byte), fenster fensterSteuer
 			return
 		}
 		switch {
-		case action == actionPlay || action == actionShow || action == actionImportCLI || action == actionUpdate:
+		case action == actionPlay || action == actionShow || action == actionJoin || action == actionImportCLI || action == actionUpdate:
 			log.Printf("Steuerung: %s", action)
 			handle(action, body)
 			w.WriteHeader(http.StatusAccepted)

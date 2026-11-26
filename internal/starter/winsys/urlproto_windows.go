@@ -11,8 +11,8 @@ import (
 // RegisterURLProtocol trägt das URL-Protokoll scheme:// für den aktuellen
 // Benutzer ein (HKCU\Software\Classes\<scheme>, keine Adminrechte): Ein Link
 // scheme://… startet exe mit der Adresse als Argument. Schon passende
-// Einträge bleiben unberührt (changed false). Discord startet so den Starter,
-// wenn jemand „Beitreten“ klickt und wanderwelt nicht läuft.
+// Einträge bleiben unberührt (changed false). So startet die Beitreten-Seite
+// den Starter (wanderwelt://beitreten).
 func RegisterURLProtocol(scheme, exe, description string) (changed bool, err error) {
 	root := `Software\Classes\` + scheme
 	cmdKey := root + `\shell\open\command`

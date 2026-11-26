@@ -195,9 +195,8 @@ func TestHandshakeUndAktivitaet(t *testing.T) {
 	if hs["v"] != float64(1) || hs["client_id"] != "4711" {
 		t.Errorf("Handshake: %s", fr[0].payload)
 	}
-	sub := f.cmds("SUBSCRIBE")
-	if len(sub) != 1 || !strings.Contains(string(sub[0]), `"ACTIVITY_JOIN"`) {
-		t.Errorf("Abo: %q", sub)
+	if sub := f.cmds("SUBSCRIBE"); len(sub) != 0 {
+		t.Errorf("unerwartetes Abo: %q", sub)
 	}
 
 	var cmd struct {
@@ -228,20 +227,21 @@ func TestHandshakeUndAktivitaet(t *testing.T) {
 		t.Errorf("Befehl: %s", acts[0])
 	}
 	if a.Details != "wanderwelt" || a.State != "mit 3 Freunden" || a.Timestamps.Start != start.Unix() ||
-		a.Assets.LargeImage != "wanderwelt-discord-1024" || len(a.Buttons) != 1 ||
-		a.Buttons[0].Label != "wanderwelt herunterladen" || a.Buttons[0].URL != "https://github.com/Bazinga0o0/wanderwelt/releases/latest" {
+		a.Assets.LargeImage != "wanderwelt-discord-1024" || len(a.Buttons) != 2 ||
+		a.Buttons[0].Label != "Beitreten" || a.Buttons[0].URL != "https://bazinga0o0.github.io/wanderwelt/beitreten/" ||
+		a.Buttons[1].Label != "wanderwelt herunterladen" || a.Buttons[1].URL != "https://github.com/Bazinga0o0/wanderwelt/releases/latest" {
 		t.Errorf("Aktivität: %s", acts[0])
 	}
 	if a.Party != nil || a.Secrets != nil {
-		t.Errorf("Party/Geheimnis ohne JoinSecret: %s", acts[0])
+		t.Errorf("Party/Geheimnis ohne Gruppe: %s", acts[0])
 	}
 }
 
-func TestPartyUndGeheimnis(t *testing.T) {
+func TestPartyOhneGeheimnis(t *testing.T) {
 	f := newFake()
 	p := New(opts(f))
 	defer p.Close()
-	p.Set(Activity{State: "x", PartyID: "wanderwelt-ab12", PartySize: 3, PartyMax: 4, JoinSecret: "w1.abc"})
+	p.Set(Activity{State: "x", PartyID: "wanderwelt-ab12", PartySize: 3, PartyMax: 4})
 	acts := f.waitCmds(t, "SET_ACTIVITY", 1)
 	var m struct {
 		Args struct {
@@ -250,9 +250,8 @@ func TestPartyUndGeheimnis(t *testing.T) {
 					ID   string `json:"id"`
 					Size []int  `json:"size"`
 				} `json:"party"`
-				Secrets struct {
-					Join string `json:"join"`
-				} `json:"secrets"`
+				Buttons []struct{ Label, URL string } `json:"buttons"`
+				Secrets *json.RawMessage              `json:"secrets"`
 			} `json:"activity"`
 		} `json:"args"`
 	}
@@ -260,8 +259,14 @@ func TestPartyUndGeheimnis(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := m.Args.Activity
-	if a.Party.ID != "wanderwelt-ab12" || len(a.Party.Size) != 2 || a.Party.Size[0] != 3 || a.Party.Size[1] != 4 || a.Secrets.Join != "w1.abc" {
+	if a.Party.ID != "wanderwelt-ab12" || len(a.Party.Size) != 2 || a.Party.Size[0] != 3 || a.Party.Size[1] != 4 {
 		t.Errorf("Party: %s", acts[0])
+	}
+	if a.Secrets != nil || strings.Contains(string(acts[0]), `"secrets"`) {
+		t.Errorf("Discord-Geheimnis gesendet (mit Knöpfen nicht erlaubt): %s", acts[0])
+	}
+	if len(a.Buttons) != 2 || strings.Contains(a.Buttons[0].URL, "#") || strings.Contains(a.Buttons[0].URL, "w1.") {
+		t.Errorf("Knöpfe: %s", acts[0])
 	}
 }
 
@@ -368,7 +373,6 @@ func TestOhneClientIDKeinVerbindungsversuch(t *testing.T) {
 		o := opts(f)
 		o.ClientID = id
 		p := New(o)
-		p.Listen()
 		p.Set(Activity{State: "x"})
 		p.Clear()
 		p.Close()
@@ -381,54 +385,21 @@ func TestOhneClientIDKeinVerbindungsversuch(t *testing.T) {
 	}
 }
 
-func TestJoinEreignis(t *testing.T) {
+func TestEreignisseWerdenIgnoriert(t *testing.T) {
 	f := newFake()
-	got := make(chan string, 4)
-	o := opts(f)
-	o.OnJoin = func(s string) { got <- s }
-	p := New(o)
-	defer p.Close()
-	p.Listen() // ohne Aktivität verbinden und abonnieren
-	f.waitCmds(t, "SUBSCRIBE", 1)
-
-	f.push(t, `{"cmd":"DISPATCH","evt":"ACTIVITY_JOIN","data":{"secret":"w1.geheim"}}`)
-	select {
-	case s := <-got:
-		if s != "w1.geheim" {
-			t.Errorf("Geheimnis %q", s)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("kein ACTIVITY_JOIN angekommen")
-	}
-
-	// Andere Ereignisse und leere Geheimnisse lösen nichts aus.
-	f.push(t, `{"cmd":"DISPATCH","evt":"ACTIVITY_SPECTATE","data":{"secret":"x"}}`)
-	f.push(t, `{"cmd":"DISPATCH","evt":"ACTIVITY_JOIN","data":{"secret":""}}`)
-	time.Sleep(100 * time.Millisecond)
-	select {
-	case s := <-got:
-		t.Errorf("unerwartetes Ereignis: %q", s)
-	default:
-	}
-}
-
-func TestJoinEreignisWaehrendAktivitaet(t *testing.T) {
-	f := newFake()
-	got := make(chan string, 4)
-	o := opts(f)
-	o.OnJoin = func(s string) { got <- s }
-	p := New(o)
+	p := New(opts(f))
 	defer p.Close()
 	p.Set(Activity{State: "x"})
 	f.waitCmds(t, "SET_ACTIVITY", 1)
+	// Auch ein unerwünschtes Beitritts-Ereignis löst nichts aus; Schreiben
+	// klappt weiterhin.
 	f.push(t, `{"cmd":"DISPATCH","evt":"ACTIVITY_JOIN","data":{"secret":"w1.a"}}`)
-	select {
-	case <-got:
-	case <-time.After(2 * time.Second):
-		t.Fatal("kein ACTIVITY_JOIN")
-	}
-	p.Set(Activity{State: "y"}) // Schreiben klappt weiterhin
+	time.Sleep(50 * time.Millisecond)
+	p.Set(Activity{State: "y"})
 	f.waitCmds(t, "SET_ACTIVITY", 2)
+	if sub := f.cmds("SUBSCRIBE"); len(sub) != 0 {
+		t.Errorf("unerwartetes Abo: %q", sub)
+	}
 }
 
 func TestPingWirdBeantwortet(t *testing.T) {
@@ -438,7 +409,7 @@ func TestPingWirdBeantwortet(t *testing.T) {
 		_ = writeFrame(s, opFrame, []byte(`{"cmd":"SET_ACTIVITY"}`))
 	}()
 	done := make(chan response, 1)
-	go func() { r, _ := readResponse(c, "", nil); done <- r }()
+	go func() { r, _ := readResponse(c, ""); done <- r }()
 	op, p, err := readFrame(s)
 	if err != nil || op != opPong || string(p) != `{"n":1}` {
 		t.Fatalf("PONG: %d %s %v", op, p, err)

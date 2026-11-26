@@ -17,7 +17,7 @@ const discordTakt = 5 * time.Second
 // discordActivity: Soll Discord etwas anzeigen? Nur beim Hosten und
 // Mitspielen: „mit N Freunden“ (andere Spieler, ohne den eigenen Namen, keine
 // Namen selbst). ok false: Aktivität löschen.
-func discordActivity(ph phase, status *api.Status, me *api.Me, since time.Time, secret, partyID string) (discord.Activity, bool) {
+func discordActivity(ph phase, status *api.Status, me *api.Me, since time.Time, partyID string) (discord.Activity, bool) {
 	if ph != phHosting && ph != phJoined {
 		return discord.Activity{}, false
 	}
@@ -30,7 +30,7 @@ func discordActivity(ph phase, status *api.Status, me *api.Me, since time.Time, 
 		others = len(fensterapi.AndereSpieler(status.Players, own))
 	}
 	act := discord.Activity{State: discord.FriendsText(others), Start: since}
-	if secret != "" {
+	if partyID != "" {
 		// „N von M“: N = Spieler online (mit mir), M = Mitglieder laut Status
 		// (mindestens N+1, damit Neue über Discord auch dann beitreten können, wenn alle online sind). Fehlt die Zahl (älterer Koordinator, 0): N+1, damit
 		// „Beitreten“ nicht als voll gesperrt wird.
@@ -40,7 +40,6 @@ func discordActivity(ph phase, status *api.Status, me *api.Me, since time.Time, 
 			m = max(status.Members, n+1)
 		}
 		act.PartyID, act.PartySize, act.PartyMax = partyID, n, m
-		act.JoinSecret = secret
 	}
 	return act, true
 }
@@ -82,11 +81,11 @@ func (a *App) discordTick(since time.Time) time.Time {
 	} else {
 		since = time.Time{}
 	}
-	var secret, partyID string
+	partyID := ""
 	if ph == phHosting || ph == phJoined {
-		secret, partyID = a.joinSecret()
+		partyID = a.partyID()
 	}
-	if act, ok := discordActivity(ph, status, me, since, secret, partyID); ok {
+	if act, ok := discordActivity(ph, status, me, since, partyID); ok {
 		a.presence.Set(act)
 	} else {
 		a.presence.Clear()

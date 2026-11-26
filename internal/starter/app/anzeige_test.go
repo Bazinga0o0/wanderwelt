@@ -28,12 +28,12 @@ func TestDiscordActivityText(t *testing.T) {
 		{"laedt hoch", phUploading, nil, "", false},
 	}
 	for _, c := range cases {
-		act, ok := discordActivity(c.ph, &api.Status{Players: c.players}, me, since, "", "")
+		act, ok := discordActivity(c.ph, &api.Status{Players: c.players}, me, since, "")
 		if ok != c.ok || (ok && (act.State != c.want || !act.Start.Equal(since))) {
 			t.Errorf("%s: %+v %v", c.name, act, ok)
 		}
 	}
-	if act, ok := discordActivity(phHosting, nil, nil, since, "", ""); !ok || act.State != "ohne Freunde :(" {
+	if act, ok := discordActivity(phHosting, nil, nil, since, ""); !ok || act.State != "ohne Freunde :(" {
 		t.Errorf("ohne Status: %+v %v", act, ok)
 	}
 }

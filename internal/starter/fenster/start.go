@@ -24,6 +24,8 @@ type startAnsicht struct {
 	liste                                   widget.List
 	spielen, beenden, beendenOhne, kopieren widget.Clickable
 	kopiertBis                              time.Time
+	codeKopieren                            widget.Clickable
+	codeKopiertBis                          time.Time
 	wartet                                  bool
 	fehler                                  string
 }
@@ -99,6 +101,12 @@ func (v *startAnsicht) layout(gtx layout.Context, u *oberflaeche, s schnappschus
 		u.zeige("info", "Adresse kopiert: "+addr, jetzt)
 	}
 
+	if v.codeKopieren.Clicked(gtx) && z.Gruppencode != "" {
+		gtx.Execute(clipboard.WriteCmd{Type: "application/text", Data: io.NopCloser(strings.NewReader(z.Gruppencode))})
+		v.codeKopiertBis = jetzt.Add(2 * time.Second)
+		u.zeige("info", "Gruppencode kopiert.", jetzt)
+	}
+
 	var teile []layout.Widget
 	if z.Status != nil && z.Status.Maintenance != nil {
 		wm := z.Status.Maintenance
@@ -147,7 +155,33 @@ func (v *startAnsicht) layout(gtx layout.Context, u *oberflaeche, s schnappschus
 			return v.adressKarte(gtx, u, addr, jetzt)
 		})
 	}
+	if z.Gruppencode != "" {
+		teile = append(teile, func(gtx layout.Context) layout.Dimensions {
+			return v.codeKarte(gtx, u, jetzt)
+		})
+	}
 	return seite(gtx, &v.liste, teile)
+}
+
+// codeKarte: „Gruppencode kopieren“ zum Weitergeben an neue Mitspieler.
+func (v *startAnsicht) codeKarte(gtx layout.Context, u *oberflaeche, jetzt time.Time) layout.Dimensions {
+	t := u.th
+	knopfText := "Gruppencode kopieren"
+	if jetzt.Before(v.codeKopiertBis) {
+		knopfText = "Kopiert"
+		gtx.Execute(op.InvalidateCmd{At: v.codeKopiertBis})
+	}
+	return t.karte(gtx, func(gtx layout.Context) layout.Dimensions {
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+			layout.Rigid(t.klein("NEUE MITSPIELER")),
+			layout.Rigid(layout.Spacer{Height: 10}.Layout),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return t.knopf(gtx, &v.codeKopieren, knopfText, knopfNeben, true)
+			}),
+			layout.Rigid(layout.Spacer{Height: 8}.Layout),
+			layout.Rigid(t.leise("Gib den Code nur Leuten, die mitspielen sollen; der Admin muss sie noch annehmen. Er enthält nur öffentliche Adressen, keinen Zugang.")),
+		)
+	})
 }
 
 // beendenFrage: Text der Rückfrage vor „Spiel für mich beenden“ beim

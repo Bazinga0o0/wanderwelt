@@ -31,10 +31,6 @@ type Options struct {
 	Dial     Dial // Standard: Named Pipe (nur Windows)
 	// Logf: Debug-Log; nil: nichts.
 	Logf func(format string, args ...any)
-	// OnJoin bekommt das Beitritts-Geheimnis, wenn jemand bei einem Freund
-	// auf „Beitreten“ klickt. Es kommt aus dem Lese-Thread des Pakets und
-	// muss sofort zurückkehren; das Geheimnis ist unbekannte Eingabe.
-	OnJoin func(secret string)
 	// Backoff: erste Wartezeit nach einem Fehler (Standard 5 s), verdoppelt
 	// bis MaxBackoff (Standard 60 s).
 	Backoff, MaxBackoff time.Duration
@@ -78,9 +74,8 @@ func New(o Options) Presence {
 type client struct {
 	o Options
 
-	mu     sync.Mutex
-	want   *Activity // gewünschte Anzeige; nil: keine
-	listen bool
+	mu   sync.Mutex
+	want *Activity // gewünschte Anzeige; nil: keine
 
 	wake     chan struct{}
 	stop     chan struct{}
@@ -97,7 +92,6 @@ type client struct {
 
 func (c *client) Set(a Activity) { c.update(func() { c.want = &a }) }
 func (c *client) Clear()         { c.update(func() { c.want = nil }) }
-func (c *client) Listen()        { c.update(func() { c.listen = true }) }
 
 func (c *client) update(f func()) {
 	c.mu.Lock()
@@ -169,8 +163,8 @@ func (c *client) drop() {
 	c.sent = ""
 }
 
-// pollEvents liest, was Discord von sich aus geschickt hat (Ereignisse,
-// PING, CLOSE).
+// pollEvents liest, was Discord von sich aus geschickt hat (PING, CLOSE; wir
+// abonnieren keine Ereignisse).
 func (c *client) pollEvents() error {
 	for {
 		n, err := c.conn.Available()
@@ -180,20 +174,9 @@ func (c *client) pollEvents() error {
 		if n == 0 {
 			return nil
 		}
-		r, ok, err := readOne(c.conn)
-		if err != nil {
+		if _, _, err := readOne(c.conn); err != nil {
 			return err
 		}
-		if ok && r.Cmd == "DISPATCH" {
-			c.event(r)
-		}
-	}
-}
-
-// event wertet ein Ereignis von Discord aus.
-func (c *client) event(r response) {
-	if r.Evt == evtJoin && c.o.OnJoin != nil && r.Data.Secret != "" {
-		c.o.OnJoin(r.Data.Secret)
 	}
 }
 
@@ -207,11 +190,10 @@ func (c *client) apply(connect bool) error {
 		w.Start = w.Start.Truncate(time.Second)
 		want = &w
 	}
-	listen := c.listen
 	c.mu.Unlock()
 	key, _ := json.Marshal(want)
-	if c.conn == nil && (want == nil && !listen || !connect) {
-		return nil // nichts zu löschen, nichts zu hören
+	if c.conn == nil && (want == nil || !connect) {
+		return nil // nichts zu löschen
 	}
 	if string(key) == c.sent {
 		return nil // unverändert
@@ -253,14 +235,6 @@ func (c *client) connect() error {
 	if r.Evt != "READY" {
 		return fmt.Errorf("Handshake: unerwartete Antwort %q %s", r.Evt, r.Data.Message)
 	}
-	c.nonce++
-	r, err = c.exchange(opFrame, subscribePayload(evtJoin, strconv.Itoa(c.nonce)), "")
-	if err != nil {
-		return fmt.Errorf("Abo ACTIVITY_JOIN: %w", err)
-	}
-	if r.Evt == "ERROR" {
-		c.o.Logf("Discord: ACTIVITY_JOIN nicht abonniert: %s", r.Data.Message)
-	}
 	c.o.Logf("Discord verbunden")
 	return nil
 }
@@ -280,7 +254,7 @@ func (c *client) exchange(op uint32, payload []byte, wantEvt string) (response, 
 			ch <- result{err: err}
 			return
 		}
-		r, err := readResponse(conn, wantEvt, c.event)
+		r, err := readResponse(conn, wantEvt)
 		ch <- result{r, err}
 	}()
 	select {

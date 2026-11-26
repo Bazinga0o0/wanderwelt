@@ -60,17 +60,13 @@ type party struct {
 	ID   string `json:"id"`
 	Size [2]int `json:"size"`
 }
-type secrets struct {
-	Join string `json:"join"`
-}
 type activityJSON struct {
 	Details    string      `json:"details"`
 	State      string      `json:"state"`
 	Timestamps *timestamps `json:"timestamps,omitempty"`
 	Assets     assets      `json:"assets"`
-	Buttons    []button    `json:"buttons"`
+	Buttons    []button    `json:"buttons,omitempty"`
 	Party      *party      `json:"party,omitempty"`
-	Secrets    *secrets    `json:"secrets,omitempty"`
 }
 
 // activityPayload ist das JSON für SET_ACTIVITY; a nil löscht die Aktivität.
@@ -81,11 +77,12 @@ func activityPayload(a *Activity, pid int, nonce string) ([]byte, error) {
 			Details: Details,
 			State:   a.State,
 			Assets:  assets{LargeImage: LargeImage, LargeText: Details},
-			Buttons: []button{{Label: ButtonText, URL: ButtonURL}},
+			Buttons: []button{{Label: JoinText, URL: JoinPage}, {Label: ButtonText, URL: ButtonURL}},
 		}
-		if JoinEnabled && a.JoinSecret != "" && a.PartyMax > 0 {
+		// Party nur als Anzeige „N von M“: Discord erlaubt kein secrets.join
+		// zusammen mit Knöpfen.
+		if a.PartyMax > 0 {
 			aj.Party = &party{ID: a.PartyID, Size: [2]int{a.PartySize, a.PartyMax}}
-			aj.Secrets = &secrets{Join: a.JoinSecret}
 		}
 		if !a.Start.IsZero() {
 			aj.Timestamps = &timestamps{Start: a.Start.Unix()}
@@ -93,11 +90,6 @@ func activityPayload(a *Activity, pid int, nonce string) ([]byte, error) {
 		args["activity"] = aj
 	}
 	return json.Marshal(map[string]any{"cmd": "SET_ACTIVITY", "args": args, "nonce": nonce})
-}
-
-func subscribePayload(evt, nonce string) []byte {
-	b, _ := json.Marshal(map[string]any{"cmd": "SUBSCRIBE", "evt": evt, "args": map[string]any{}, "nonce": nonce})
-	return b
 }
 
 func handshakePayload(clientID string) []byte {
@@ -114,19 +106,14 @@ type response struct {
 	Nonce string `json:"nonce"`
 	Data  struct {
 		Message string `json:"message"`
-		Secret  string `json:"secret"`
 	} `json:"data"`
 }
 
-// evtJoin ist das Ereignis, das Discord schickt, wenn jemand „Beitreten“
-// klickt.
-const evtJoin = "ACTIVITY_JOIN"
-
 // readResponse liest Rahmen bis zur Antwort auf einen Befehl. Ereignisse
-// (cmd DISPATCH) gehen an onEvent; ist wantEvt nicht leer, beendet nur
+// (cmd DISPATCH) werden übergangen; ist wantEvt nicht leer, beendet nur
 // dieses Ereignis (etwa READY) das Lesen, sonst die erste Antwort, die kein
 // Ereignis ist. PING wird beantwortet, CLOSE ist ein Fehler.
-func readResponse(rw io.ReadWriter, wantEvt string, onEvent func(response)) (response, error) {
+func readResponse(rw io.ReadWriter, wantEvt string) (response, error) {
 	for {
 		r, ok, err := readOne(rw)
 		if err != nil {
@@ -138,9 +125,6 @@ func readResponse(rw io.ReadWriter, wantEvt string, onEvent func(response)) (res
 		if r.Cmd == "DISPATCH" {
 			if wantEvt != "" && r.Evt == wantEvt {
 				return r, nil
-			}
-			if onEvent != nil {
-				onEvent(r)
 			}
 			continue
 		}

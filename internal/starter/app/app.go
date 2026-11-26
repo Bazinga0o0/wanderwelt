@@ -105,6 +105,9 @@ type Options struct {
 	Handoff bool
 	// Updated: Diese Kopie hat gerade eine ältere Version ersetzt.
 	Updated bool
+	// JoinLink: Start über wanderwelt://beitreten (Beitreten-Seite); das
+	// Argument des Links trägt nichts und wird nie ausgewertet.
+	JoinLink bool
 	// Invite: die beim Bauen eingesetzten Gruppen-Adressen (Base64-YAML,
 	// siehe group.ParseInvite); leer: Einrichtung mit Gruppendatei.
 	Invite string
@@ -204,10 +207,8 @@ type App struct {
 
 	// presence: Discord-Anzeige (anzeige.go); nil: aus (Tests).
 	presence discord.Presence
-	// joinCh: ein Beitritts-Geheimnis aus Discord, solange es noch keine
-	// Gruppe gibt (beitritt_discord.go). joinLogged: nur der Discord-Loop.
-	joinCh     chan string
-	joinLogged bool
+	// lastJoinLink: wann zuletzt ein Beitritts-Link das Fenster öffnete (unter mu).
+	lastJoinLink time.Time
 
 	refreshCh chan struct{}
 	playCh    chan struct{}
@@ -231,6 +232,9 @@ func Run(opts Options) int {
 			action := actionShow
 			if opts.Play {
 				action = actionPlay
+			}
+			if opts.JoinLink {
+				action = actionJoin
 			}
 			if err := sendToRunning(action); err != nil {
 				showError(err.Error())
@@ -282,12 +286,9 @@ func Run(opts Options) int {
 		refreshCh: make(chan struct{}, 1),
 		playCh:    make(chan struct{}, 1),
 		quitCh:    make(chan struct{}),
-		joinCh:    make(chan string, 1),
 	}
-	// Discord-Anzeige: früh verbinden (auch vor der Einrichtung), damit ein
-	// Klick auf „Beitreten“ ankommt. Aus (Noop), solange keine Client-ID steht.
-	a.presence = discord.New(discord.Options{ClientID: discord.ClientID, Logf: log.Printf, OnJoin: a.onDiscordJoin})
-	a.presence.Listen()
+	// Discord-Anzeige (aus/Noop, solange keine Client-ID steht).
+	a.presence = discord.New(discord.Options{ClientID: discord.ClientID, Logf: log.Printf})
 	defer a.discordClose()
 
 	// Notfallkopie: bricht ab, wenn jemand den Platz braucht; Kopie auch nach
@@ -313,7 +314,9 @@ func Run(opts Options) int {
 	}
 
 	freshInstall := false
+	joinLink := opts.JoinLink
 	if !installed() {
+		joinLink = false // die Einrichtung fragt selbst nach dem Gruppencode
 		if err := a.install(ctx); err != nil {
 			if errors.Is(err, errLater) {
 				log.Printf("Einrichtung wartet auf die Freigabe; sie geht beim nächsten Start weiter")
@@ -354,10 +357,13 @@ func Run(opts Options) int {
 		log.Printf("Herunterfahren abfangen nicht möglich: %v", err)
 	}
 
+	if joinLink {
+		go a.onJoinLink()
+	}
 	go a.statusLoop()
 	go a.dauerbetriebLoop()
 	go a.presenceLoop()
-	a.registerDiscordProtocol()
+	a.registerJoinProtocol()
 	go a.discordLoop()
 	go a.selfUpdateLoop()
 	if freshInstall {
@@ -507,6 +513,9 @@ func handOffToInstalled(opts Options, release func()) (handed bool, err error) {
 	if opts.Play {
 		args = append(args, "play")
 	}
+	if opts.JoinLink {
+		args = append(args, JoinLinkArg)
+	}
 	cmd := exec.Command(target, args...)
 	cmd.Dir = group.Home()
 	release()
@@ -632,6 +641,8 @@ func (a *App) onControl(action string, body []byte) {
 	switch action {
 	case actionPlay:
 		a.requestPlay()
+	case actionJoin:
+		a.onJoinLink()
 	case actionShow:
 		go notify("wanderwelt läuft schon – das Symbol ist im Infobereich der Taskleiste.")
 	case actionUpdate:

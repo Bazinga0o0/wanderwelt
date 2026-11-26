@@ -43,7 +43,8 @@ Einrichten:
    doppelklicken. Warnt Windows mit „Der Computer wurde durch Windows
    geschützt“, auf „Weitere Informationen“ und dann „Trotzdem ausführen“
    klicken: Die Datei ist nicht signiert.
-2. Die Gruppendatei wählen und der Minecraft-EULA zustimmen.
+2. Die Gruppendatei wählen (oder, falls du keine hast, den Gruppencode von einem
+   Mitspieler einfügen) und der Minecraft-EULA zustimmen.
 3. wanderwelt lädt, was es braucht (beim ersten Mal einige Minuten), legt
    im Minecraft-Launcher das Profil „wanderwelt“ an und auf dem Desktop die
    Verknüpfung „wanderwelt – Spielen“. Danach läuft es als Symbol im

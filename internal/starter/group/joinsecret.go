@@ -10,10 +10,13 @@ import (
 	"strings"
 )
 
-// Beitritts-Geheimnis für Discord (Rich Presence): Die öffentlichen
-// Gruppen-Adressen in höchstens 128 Bytes, nie ein Token. Ein Geheimnis von
-// außen ist unbekannte Eingabe: Es wird streng geprüft und nur nach
-// ausdrücklicher Bestätigung mit sichtbaren Adressen benutzt.
+// Beitritts-Geheimnis für den Beitreten-Knopf in Discord: Die öffentlichen
+// Gruppen-Adressen in höchstens 128 Bytes, nie ein Token. Es steht im
+// Fragment der Adresse https://…/beitreten/#<Geheimnis> und kommt über das
+// URL-Protokoll wanderwelt://beitreten?s=<Geheimnis> in den Starter. Ein
+// Geheimnis von außen ist unbekannte Eingabe (jede Webseite kann das
+// Protokoll auslösen): Es wird streng geprüft und nur nach ausdrücklicher
+// Bestätigung mit sichtbaren Adressen benutzt.
 //
 // Form: "w1." + Base64 (URL-Alphabet, ohne Auffüllung) von vier Zeilen:
 //
@@ -23,12 +26,16 @@ import (
 //	token_url     Pfad auf web_url (beginnt mit "/"); leer: keiner
 const (
 	joinPrefix = "w1."
-	// MaxJoinSecret ist die Grenze von Discord für Geheimnisse (Bytes).
+	// MaxJoinSecret ist die Länge, die Beitritts-Geheimnisse höchstens haben
+	// (Zeichen; die Seite docs/beitreten prüft dieselbe Grenze).
 	MaxJoinSecret = 128
 )
 
 var (
-	hostRe      = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$`)
+	hostRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$`)
+	// secretRe: Form eines Geheimnisses von außen (Base64-Decoder von Go
+	// überspringt Zeilenumbrüche stillschweigend, darum vorher prüfen).
+	secretRe    = regexp.MustCompile(`^w1\.[A-Za-z0-9_-]+$`)
 	tokenPathRe = regexp.MustCompile(`^/[A-Za-z0-9._~/-]{0,63}$`)
 )
 
@@ -121,7 +128,7 @@ func EncodeJoin(inv *Invite) (string, error) {
 // Ergebnis ist eine geprüfte Einladung (ohne Token), die der Aufrufer dem
 // Mitglied zur Bestätigung zeigen muss.
 func DecodeJoin(secret string) (*Invite, error) {
-	if len(secret) > MaxJoinSecret || !strings.HasPrefix(secret, joinPrefix) {
+	if len(secret) > MaxJoinSecret || !secretRe.MatchString(secret) {
 		return nil, errors.New("kein wanderwelt-Beitritts-Geheimnis")
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(secret[len(joinPrefix):])
