@@ -44,7 +44,9 @@ Einrichten:
    geschützt“, auf „Weitere Informationen“ und dann „Trotzdem ausführen“
    klicken: Die Datei ist nicht signiert.
 2. Die Gruppendatei wählen (oder, falls du keine hast, den Gruppencode von einem
-   Mitspieler einfügen) und der Minecraft-EULA zustimmen.
+   Mitspieler einfügen, oder „Entdecken“: Adresse des Tunnel-Servers und
+   deinen Token eingeben und eine der aufgelisteten Gruppen wählen) und der
+   Minecraft-EULA zustimmen.
 3. wanderwelt lädt, was es braucht (beim ersten Mal einige Minuten), legt
    im Minecraft-Launcher das Profil „wanderwelt“ an und auf dem Desktop die
    Verknüpfung „wanderwelt – Spielen“. Danach läuft es als Symbol im
@@ -103,11 +105,35 @@ Speicher mehr; wanderwelt läuft im Infobereich weiter.
   Autostart mit Windows, Dauerbetrieb und „Darf das Hosten übernehmen“. Die
   Leistungswerte gelten ab dem nächsten Serverstart; „Darf das Hosten
   übernehmen“ gilt sofort, auch während du mitspielst.
+- **Entdecken**: Gruppen, die der Tunnel-Server deiner Gruppen auflistet
+  (Betreiber entscheiden, welche; nicht gelistete, private Gruppen erreichst
+  du nur mit dem Gruppencode). Je Gruppe siehst du Titel, Beschreibung,
+  Mitgliederzahl und deinen Zustand („Mitglied“, „angefragt“). „Beitritt
+  anfragen“ fragt deinen Minecraft-Namen und stellt die Anfrage; ein Admin der
+  Gruppe nimmt dich an. Danach erscheint die Gruppe in der Auswahl im Kopf des
+  Fensters. Die Texte kommen von den Servern und werden nur als Text gezeigt.
 - **Mitglieder** (nur Admins): alle Mitglieder mit Admin- und Op-Schalter und
   wer gerade online ist. Mitglieder anlegen oder entfernen macht der Admin auf
   dem Server, nicht im Fenster.
 - **Log**: die letzten Zeilen des Logs, folgt automatisch; „Log-Ordner öffnen“
   zeigt den Ordner.
+
+### Mehrere Gruppen
+
+Du kannst in mehreren Gruppen Mitglied sein (jede mit eigener Welt, eigenem
+Host und eigenem Stand); Hosten und Spielen gelten immer für die aktive
+Gruppe. Ab der zweiten Gruppe zeigt das Fenster oben die Zeile „Gruppe“ mit
+einem Knopf je Gruppe, das Symbol im Infobereich nennt die aktive Gruppe in
+eckigen Klammern. Der Gruppenname bleibt auf deinem PC; Discord erfährt ihn
+nicht. Wechseln geht nur, solange du weder hostest noch mitspielst und nichts
+hochgeladen oder geladen wird; sonst sagt das Fenster, was zuerst zu beenden
+ist. Eine Gruppendatei einer anderen Gruppe („Gruppendatei laden“ im Menü)
+fügt die Gruppe hinzu, ohne die aktive zu ersetzen. Die Notfallkopie hat je
+Gruppe einen eigenen Ordner (`wanderwelt-Notfallkopie-<Gruppe>`). Beim ersten
+Start dieser Version verschiebt wanderwelt die bisherigen Daten einmalig in
+den Ordner der Gruppe (nichts wird gelöscht; geht das nicht, bleibt alles wie
+es war, und es gibt weiter nur eine Gruppe). Der Link `wanderwelt://beitreten`
+öffnet bei mehreren Gruppen den Reiter „Entdecken“.
 
 ### Rollen
 
@@ -205,7 +231,7 @@ goreleaser release --snapshot --clean   # oder im Release-Job mit dem Secret
 `WANDERWELT_GRUPPE` gesetzt ist. Der Mitspieler legt auf `web_url` ein
 Konto an, der Admin schaltet es in tunneld frei, der Mitspieler erstellt
 einen Token und fügt ihn bei der Einrichtung ein (verdeckte Eingabe).
-Der Token landet nur in `%LOCALAPPDATA%\wanderwelt\gruppe.yaml` (Zugriff
+Der Token landet nur in `%LOCALAPPDATA%\wanderwelt\gruppen\<id>\gruppe.yaml` (Zugriff
 nur für das eigene Windows-Konto), nie im Log. Gehört das Konto noch nicht
 zur Gruppe, fragt die Einrichtung den Minecraft-Namen (erkannt aus dem
 Launcher, sonst Eingabe), stellt die Beitrittsanfrage (`POST /v1/join`)
@@ -254,11 +280,27 @@ Die Unterbefehle hängen sich an die Konsole des Aufrufers. Ein GUI-Programm
 wartet `cmd.exe` nicht ab; in PowerShell `Start-Process -Wait -NoNewWindow`
 oder Git-Bash nehmen, wenn der Exit-Code zählt.
 
-Ablage in `%LOCALAPPDATA%\wanderwelt` (bzw. `WANDERWELT_HOME`):
-`wanderwelt.exe` (die installierte Kopie), `gruppe.yaml`, `state.json`,
-`profil.yaml`, `control.json` (Port und Token der Steuerung, solange der Tray
+Ablage in `%LOCALAPPDATA%\wanderwelt` (bzw. `WANDERWELT_HOME`), gemeinsam für
+alle Gruppen: `wanderwelt.exe` (die installierte Kopie), `aktiv.json` (die
+aktive Gruppe), `control.json` (Port und Token der Steuerung, solange der Tray
 läuft), `logs/wanderwelt.log` (ab 10 MB nach `wanderwelt.log.1`), `deps/`,
-`server/`. Autostart: `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\wanderwelt`.
+`recipes/`, `hashcache.json`, `update/`. Je Gruppe ein Ordner
+`gruppen\<id>\` (`<id>` ist der Host des Koordinators in Kleinbuchstaben, ein
+Port als `-<port>`) mit `gruppe.yaml` (mit Token), `state.json`, `profil.yaml`,
+`tunnel.yaml` (mit Token), `notfallkopie.json`, `server/` und `verworfen-*`.
+Das Einzel-Layout früherer Versionen (alles direkt im Datenordner) wird beim
+Start einmalig dorthin verschoben, nur per Umbenennen, mit Rücknahme bei
+einem Fehler. Entscheidungen und Grenzen:
+Autostart: `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\wanderwelt`.
+
+Der Reiter „Entdecken“ fragt `GET <web_url>/api/v1/directory` des
+tunnel-Servers (mit dem Token der Gruppe; `web_url` steht optional in der
+Gruppendatei, sonst `https://<Host von tunnel_server>`) und je Eintrag
+`GET /v1/info` des Koordinators. Antworten werden streng geprüft (Größe,
+Längen, Zeichen, Adresse unterhalb der Domain des tunnel-Servers), die
+Abfrage hat Zeitgrenzen, 429/503 zeigen nur einen Hinweis. Die lokale
+Steuerung bietet dafür `GET /v1/entdecken` sowie `POST /v1/gruppe` (Wechsel)
+und `POST /v1/entdeckenbeitritt` (Anfrage).
 
 Nur eine Instanz pro Datenordner (Mutex `Local\wanderwelt-<Hash>`); ein zweiter
 Start schickt seinen Wunsch über `127.0.0.1:<Port>` mit dem Token aus
@@ -393,7 +435,7 @@ startet. Es spricht über die lokale Steuerung mit der laufenden Instanz
 (127.0.0.1, Token aus `control.json`) und hat keine eigene Logik fürs Hosten:
 Aktionen lösen dieselben Wege aus wie das Tray-Menü. Schließt man es, gibt es
 allen Speicher frei; ein Absturz des Fensters hat keinen Einfluss auf Server,
-Stände oder Zuschlag. Die Reiter (Start, Welt, Hosten, Mitglieder, Log) sind
+Stände oder Zuschlag. Die Reiter (Start, Welt, Hosten, Entdecken, Mitglieder, Log) sind
 im Abschnitt „Für Mitspieler“ beschrieben.
 
 ### Hosten übergeben
@@ -987,6 +1029,27 @@ eine ältere Version geht nicht über das Manifest – Starter aktualisieren
 sich nur auf größere Versionen.
 
 
+### Gruppeninfo und Discord-Schalter
+
+In `koordinator.yaml`:
+
+```yaml
+gruppe:
+  titel: Unsere Wandergruppe                # höchstens 80 Zeichen
+  beschreibung: Gemeinsame Survival-Welt.   # höchstens 400 Zeichen
+beitritt_ueber_discord: true                # false: Knopf „Beitreten“ in Discord entfällt
+```
+
+Titel und Beschreibung sind reiner Text (keine Steuerzeichen, keine
+Zeilenumbrüche). `GET /v1/info` liefert sie jedem gültigen tunnel-Konto, auch
+Nicht-Mitgliedern: `{"title": …, "description": …, "members": N, "you":
+"mitglied"|"angefragt"|"keiner"}` (keine Namen, keine Adressen). Mit
+`beitritt_ueber_discord: false` setzt der Koordinator `no_discord_join: true`
+in `GET /v1/status`; die Starter lassen dann den Knopf „Beitreten“ in der
+Discord-Anzeige weg (der Download-Knopf bleibt). Beides gilt nach
+`systemctl restart wanderwelt-koordinator`, nicht schon nach `reload`.
+Details zum Knopf: [`docs/discord-einrichtung.md`](docs/discord-einrichtung.md).
+
 ### Beitrittsanfragen
 
 Ein Konto, das tunneld kennt (gültiger Token), aber nicht in der
@@ -1007,6 +1070,42 @@ nimmt den Spieler ohne Neustart in die Whitelist auf. Die tunnel-Freischaltung
 des Kontos bleibt Sache des Admins im tunneld-Admin-Panel. Anfragen und
 angenommene Mitglieder überstehen einen Neustart; beim Neuladen werden die
 Dateien neu gelesen.
+
+### Weitere Gruppe anlegen (Betreiber)
+
+Neue Gruppen legt **nur der Betreiber des Servers** an, nie ein Nutzer. Eine
+Gruppe ist ein eigener Koordinator-Dienst hinter demselben tunneld-Server. Je
+Gruppe nötig:
+
+1. **tunneld**: eine zweite Zeile unter `services` mit eigenem Namen, eigener
+   Subdomain, eigenem `upstream` (Loopback, eigener Port, siehe unten), eigenem
+   Dienst-Geheimnis (`secret_file`) und eigenem öffentlichen TCP-Port für
+   Minecraft (`tcp_ports`). Dann tunneld neu laden (SIGHUP) bzw. neu starten,
+   wie in der tunneld-Dokumentation beschrieben.
+2. **Koordinator-Konfiguration**: Kopie von `deploy/koordinator.example.yaml`
+   als `/etc/wanderwelt/koordinator-<name>.yaml` (Rechte wie bei der ersten:
+   `root:wanderwelt`, `0640`) mit eigenem `listen` (anderer Loopback-Port),
+   eigenem `data_dir` (etwa `/var/lib/wanderwelt-<name>`, nie dasselbe
+   Verzeichnis), `minecraft_address` und `port_holder.port`/`secret_file` der
+   neuen Dienstzeile, eigenem `manifest_file` und `provisioning.coordinator_url`
+   (Subdomain der neuen Gruppe); dazu `gruppe:` mit Titel und Beschreibung und
+   die Mitglieder der Gruppe.
+3. **Manifest und Artefakte**: ein eigenes Manifest
+   (`/etc/wanderwelt/manifest-<name>.yaml`); die Artefakte liegen im
+   `artifacts/` des neuen `data_dir` (siehe „Manifest aktualisieren“).
+4. **systemd-Unit**: `deploy/wanderwelt-koordinator.service` als
+   `wanderwelt-koordinator-<name>.service` kopieren und anpassen:
+   `StateDirectory=wanderwelt-<name>` und `--config
+   /etc/wanderwelt/koordinator-<name>.yaml`; danach `systemctl daemon-reload
+   && systemctl enable --now wanderwelt-koordinator-<name>`. Das Programm
+   (`/opt/wanderwelt/wanderwelt-koordinator`) lässt sich gemeinsam nutzen;
+   beim Aktualisieren alle Instanzen neu starten.
+5. Mitglieder der neuen Gruppe wie gewohnt anlegen (`mitglied neu … --config
+   /etc/wanderwelt/koordinator-<name>.yaml`).
+
+Soll die Gruppe im Entdecken-Reiter erscheinen, trägt der Betreiber sie
+zusätzlich in der tunneld-Konfiguration als gelistet ein (Standard: nicht
+gelistet).
 
 ## Lizenz
 

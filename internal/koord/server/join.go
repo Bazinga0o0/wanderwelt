@@ -181,6 +181,27 @@ func (s *Server) storeJoinsLocked(joins config.JoinEntries) error {
 	return nil
 }
 
+// handleInfo liefert die öffentliche Gruppenbeschreibung (GET /v1/info) für
+// jedes gültige Konto, auch für Nicht-Mitglieder.
+func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
+	id := identityOf(r)
+	info := api.GroupInfo{
+		Title:       s.cfg.Gruppe.Titel,
+		Description: s.cfg.Gruppe.Beschreibung,
+		Members:     len(s.memberList()),
+		You:         api.YouMember,
+	}
+	if id.guest {
+		info.You = api.YouNone
+		s.overlayMu.Lock()
+		if e, ok := s.joins[strings.ToLower(id.member.Email)]; ok && e.State == config.JoinStateOpen {
+			info.You = api.YouRequested
+		}
+		s.overlayMu.Unlock()
+	}
+	writeJSON(w, http.StatusOK, info)
+}
+
 // handleJoinStatus liefert den Stand der eigenen Anfrage.
 func (s *Server) handleJoinStatus(w http.ResponseWriter, r *http.Request) {
 	id := identityOf(r)

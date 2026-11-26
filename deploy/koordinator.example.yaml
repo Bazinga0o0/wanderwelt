@@ -50,6 +50,19 @@ snapshot_interval: 5m
 # nur am Netz) beenden mangels Spielern nie.
 empty_timeout: 10m
 
+# Öffentliche Beschreibung der Gruppe (GET /v1/info, für jedes gültige
+# tunnel-Konto, auch Nicht-Mitglieder; Entdecken-Reiter im Starter). Nur
+# Text: höchstens 80 bzw. 400 Zeichen, keine Steuerzeichen/Zeilenumbrüche.
+# Gilt erst nach einem Neustart.
+gruppe:
+  titel: Unsere Wandergruppe
+  beschreibung: Gemeinsame Survival-Welt, Beitritt auf Anfrage.
+
+# Knopf „Beitreten“ in der Discord-Anzeige der Mitglieder (führt auf
+# wanderwelt://beitreten). false: Knopf entfällt, Beitritt nur per Gruppencode
+# oder Anfrage. Standard true. Gilt erst nach einem Neustart.
+# beitritt_ueber_discord: true
+
 # Mitglieder: tunnel-Konto (E-Mail, Groß/Klein egal) und Minecraft-Name.
 # minecraft darf fehlen: Dann meldet das Mitglied den Namen beim Einrichten
 # des Starters selbst. Whitelist und Ops entstehen aus dieser Liste; was

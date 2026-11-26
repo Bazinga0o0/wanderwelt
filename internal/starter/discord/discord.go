@@ -17,17 +17,21 @@ const ClientID = "1575453522638544927"
 
 // Feste Teile der Anzeige.
 const (
-	Details    = "wanderwelt"
+	Details    = "Minecraft über Wanderwelt"
 	LargeImage = "wanderwelt-discord-1024"                       // Schlüssel des Art Assets im Developer Portal
 	LargeText  = "wanderwelt – github.com/Bazinga0o0/wanderwelt" // Hinweistext am Bild
 	ButtonText = "wanderwelt herunterladen"
 	ButtonURL  = "https://github.com/Bazinga0o0/wanderwelt/releases/latest"
 
-	// JoinText und JoinPage: Der Knopf „Beitreten“ führt auf die statische
-	// Seite docs/beitreten (GitHub Pages), ohne Gruppendaten in der Adresse.
-	// Discord erlaubt Knöpfe und Geheimnisse (secrets.join) nicht zugleich,
-	// darum gibt es kein Discord-Beitreten und keine Geheimnisse.
+	// JoinText und JoinURL: Der Knopf „Beitreten“ führt auf den Link
+	// wanderwelt://beitreten, den der Starter selbst öffnet (ohne
+	// Gruppendaten in der Adresse). Discord erlaubt Knöpfe und Geheimnisse
+	// (secrets.join) nicht zugleich, darum gibt es keine Geheimnisse.
+	// JoinPage ist der Rückfall, falls Discord das Schema nicht annimmt: die
+	// statische Seite docs/beitreten (GitHub Pages); sie wird nicht mehr
+	// gesendet.
 	JoinText = "Beitreten"
+	JoinURL  = "wanderwelt://beitreten"
 	JoinPage = "https://bazinga0o0.github.io/wanderwelt/beitreten/"
 )
 
@@ -39,6 +43,9 @@ type Activity struct {
 	PartyID   string
 	PartySize int
 	PartyMax  int
+	// NoJoin: Knopf „Beitreten“ weglassen (Admin hat den Beitritt über
+	// Discord ausgeschaltet); der Download-Knopf bleibt immer.
+	NoJoin bool
 }
 
 // Presence ist die Schnittstelle des Starters zu Discord. Alle Methoden

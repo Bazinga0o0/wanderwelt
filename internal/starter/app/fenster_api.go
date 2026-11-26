@@ -71,6 +71,7 @@ const (
 	aktionNotfallOrdner = "notfallordner" // Ordner der Notfallkopie öffnen
 	aktionMcName        = "mcname"        // Admin: Minecraft-Namen eines Mitglieds ändern
 	aktionBeitritt      = "beitritt"      // Admin: Beitrittsanfrage annehmen oder ablehnen
+	aktionGruppe        = "gruppe"        // aktive Gruppe wechseln
 )
 
 // setAutostart trägt die installierte Kopie in den Autostart ein bzw.
@@ -122,6 +123,8 @@ func (a *App) ansicht(w http.ResponseWriter, r *http.Request, name string) {
 		koordAufruf(a, w, r, "Beitrittsanfragen", func(ctx context.Context, c *client.Client) ([]api.JoinRequestInfo, error) {
 			return c.ListJoinRequests(ctx)
 		})
+	case "entdecken":
+		a.entdeckenAnsicht(w, r)
 	case "speicherstaende":
 		a.speicherstaende(w, r)
 	case "log":
@@ -137,7 +140,7 @@ func (a *App) ansicht(w http.ResponseWriter, r *http.Request, name string) {
 func (a *App) aktion(w http.ResponseWriter, r *http.Request, name string, body []byte) {
 	switch name {
 	case aktionBeenden, aktionBeendenOhne, aktionImport, aktionProfil, aktionAutostart, aktionZurueckholen,
-		aktionSpeicher, aktionRolle, aktionLogordner, aktionMcName, aktionBeitritt, aktionNotfall, aktionNotfallOrdner:
+		aktionSpeicher, aktionRolle, aktionLogordner, aktionMcName, aktionBeitritt, aktionNotfall, aktionNotfallOrdner, aktionGruppe, aktionEntdeckenBeitritt:
 		log.Printf("Fenster: %s", name)
 	default:
 		http.Error(w, "unbekannte Aktion", http.StatusNotFound)
@@ -310,6 +313,21 @@ func (a *App) aktion(w http.ResponseWriter, r *http.Request, name string, body [
 			return
 		}
 		antwortJSON(w, http.StatusOK, struct{}{})
+	case aktionEntdeckenBeitritt:
+		a.entdeckenBeitritt(w, r, body)
+	case aktionGruppe:
+		var req struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal(body, &req); err != nil || req.ID == "" {
+			antwortFehler(w, http.StatusBadRequest, "Welche Gruppe? Erwartet {\"id\": …}.")
+			return
+		}
+		if err := a.switchGroup(req.ID); err != nil {
+			antwortFehler(w, http.StatusConflict, err.Error())
+			return
+		}
+		antwortJSON(w, http.StatusOK, struct{}{})
 	case aktionLogordner:
 		if err := openFolder(filepath.Dir(LogPath())); err != nil {
 			antwortFehler(w, http.StatusInternalServerError, err.Error())
@@ -348,6 +366,11 @@ func (a *App) zustand() fensterapi.Zustand {
 	}
 	a.mu.Unlock()
 	z.Gruppencode = a.groupCode()
+	z.Gruppen, _ = a.gruppenListe()
+	z.WechselSperre = a.wechselSperre()
+	a.mu.Lock()
+	z.ZeigeEntdecken = time.Now().Before(a.zeigeEntdeckenBis)
+	a.mu.Unlock()
 	if p, err := bench.LoadProfile(); err == nil {
 		z.Profil = p
 	} else {

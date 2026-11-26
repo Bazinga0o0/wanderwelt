@@ -159,6 +159,13 @@ type App struct {
 	// beim selben Start nicht noch einmal.
 	nameAsked atomic.Bool
 
+	// presetToken: Token aus „Entdecken“ der Einrichtung (nur während der
+	// Einrichtung, nie im Log).
+	presetToken string
+	// zeigeEntdeckenBis: bis wann das Fenster zum Reiter „Entdecken“ springen
+	// soll (wanderwelt://beitreten bei mehreren Gruppen; unter mu).
+	zeigeEntdeckenBis time.Time
+
 	mu        sync.Mutex
 	g         *group.Group
 	c         *client.Client
@@ -202,8 +209,10 @@ type App struct {
 	// joinGemeldet: offene Beitrittsanfragen (E-Mail klein), für die der Admin
 	// schon einen Hinweis bekam (beitritte.go; unter mu).
 	joinGemeldet map[string]bool
-	joinMu       sync.Mutex   // serialisiert beitrittsHinweis
-	notfall      notfallState // Notfallkopie (notfallkopie.go)
+	ent          entdeckenState    // Reiter Entdecken (entdecken.go)
+	titel        map[string]string // Titel der Gruppen nach Kennung (nur lokal; unter mu)
+	joinMu       sync.Mutex        // serialisiert beitrittsHinweis
+	notfall      notfallState      // Notfallkopie (notfallkopie.go)
 
 	// presence: Discord-Anzeige (anzeige.go); nil: aus (Tests).
 	presence discord.Presence
@@ -268,6 +277,7 @@ func Run(opts Options) int {
 		return 0
 	}
 	removeOldCopies()
+	migrateLayout()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

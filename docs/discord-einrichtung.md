@@ -11,7 +11,8 @@ Nur beim Hosten und Mitspielen (Aktivität wird sonst gelöscht):
   „ohne Freunde :(“ (andere Spieler auf dem Server, keine Namen)
 - Spielzeit ab Hosten/Mitspielen, Symbol als großes Bild, Party „N von M“
   (M immer N+1; nur Anzeige, ohne Geheimnis), zwei Knöpfe: „Beitreten“
-  (Seite docs/beitreten) und „wanderwelt herunterladen“ (GitHub-Releases)
+  (`wanderwelt://beitreten`, nur wenn der Admin den Beitritt über Discord
+  erlaubt) und „wanderwelt herunterladen“ (GitHub-Releases, immer)
 - Läuft Discord nicht, passiert nichts (stilles Wiederverbinden, höchstens
   alle 60 s; Fehler nur im Log).
 
@@ -19,7 +20,8 @@ Nur beim Hosten und Mitspielen (Aktivität wird sonst gelöscht):
 
 - `internal/starter/discord/discord.go`: Konstante `ClientID` (aktuell
   `1575453522638544927`; "" oder "0" schaltet die Anzeige ab), `LargeImage`
-  (Schlüssel des Art Assets), Knopf-Text und -Adresse.
+  (Schlüssel des Art Assets), Knopf-Text und -Adresse (`JoinURL`,
+  Rückfall `JoinPage`).
 - `internal/starter/app/anzeige.go`: Anbindung an den Starter.
 
 ## Einmalige Schritte (falls neu aufzusetzen)
@@ -44,9 +46,22 @@ und Knöpfe zugleich gesendet werden („secrets cannot currently be sent with
 buttons“). Darum gibt es kein Discord-Beitreten (kein `secrets`, kein
 `ACTIVITY_JOIN`-Abo), sondern zwei Knöpfe:
 
-1. „Beitreten“ führt auf https://bazinga0o0.github.io/wanderwelt/beitreten/
-   (`discord.JoinPage`, ohne Fragment, ohne Gruppendaten).
-2. „wanderwelt herunterladen“ führt auf die neueste GitHub-Release.
+1. „Beitreten“ führt direkt auf `wanderwelt://beitreten`
+   (`discord.JoinURL`, ohne Gruppendaten); Discord nimmt das Schema an (am
+   2026-11-26 geprüft; ob es beim Empfänger geöffnet wird, ist am zweiten
+   Account zu prüfen). **Rückfall**, falls das nicht klappt: die Seite
+   https://bazinga0o0.github.io/wanderwelt/beitreten/ (Konstante
+   `discord.JoinPage`, wird derzeit nicht gesendet; für den Rückfall in
+   `proto.go` `JoinURL` durch `JoinPage` ersetzen).
+2. „wanderwelt herunterladen“ führt auf die neueste GitHub-Release (immer da).
+
+**Admin-Schalter**: `beitritt_ueber_discord: false` in der Koordinator-Konfig
+(Standard `true`) lässt den Knopf „Beitreten“ weg. Der Koordinator meldet das
+im Status als `no_discord_join: true` (fehlendes Feld = erlaubt); der Starter
+sendet den Knopf nur, wenn das Feld nicht gesetzt ist. Ohne Status (noch nicht
+abgerufen, älterer Koordinator) bleibt der Knopf an. Der Schalter gilt nach
+einem Neustart des Koordinators und erreicht die Starter mit dem nächsten
+Status-Abruf.
 
 **Seite** (`docs/beitreten/index.html`, statisch, eine Datei, kein Tracking,
 keine externen Ressourcen): Sie öffnet `wanderwelt://beitreten` (ohne Argument).
@@ -57,8 +72,8 @@ Gruppencode“ und „Nochmal versuchen“. Wurde wanderwelt geöffnet, versucht
 JavaScript bleiben Download-Link und Text.
 
 **GitHub Pages** einschalten (öffentliches Repo): Settings → Pages → Branch
-`main`, Ordner `/docs`. `tools/export-public.sh` behält `docs/beitreten` (und
-diese Datei); nur STAND.md und `docs/superpowers` bleiben privat.
+`main`, Ordner `/docs`. Der Export ins öffentliche Repo behält `docs/beitreten` (und
+diese Datei); interne Unterlagen bleiben privat.
 
 **Starter**: trägt `wanderwelt://` einmalig in HKCU ein (ohne Adminrechte, nur
 aus dem Installationsort, `winsys.RegisterURLProtocol`). Der Eintrag

@@ -30,6 +30,8 @@ func discordActivity(ph phase, status *api.Status, me *api.Me, since time.Time, 
 		others = len(fensterapi.AndereSpieler(status.Players, own))
 	}
 	act := discord.Activity{State: discord.FriendsText(others), Start: since}
+	// Ohne Status oder ohne Feld: Beitritt über Discord erlaubt.
+	act.NoJoin = status != nil && status.NoDiscordJoin
 	if partyID != "" {
 		// „N von M“: N = Spieler online (mit mir), M = Mitglieder laut Status
 		// (mindestens N+1, damit Neue über Discord auch dann beitreten können, wenn alle online sind). Fehlt die Zahl (älterer Koordinator, 0): N+1, damit

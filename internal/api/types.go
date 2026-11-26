@@ -96,6 +96,27 @@ type Status struct {
 	// Members: Zahl der Gruppenmitglieder (ohne offene Beitrittsanfragen, ohne
 	// Namen); 0: ältere Koordinatoren kennen das Feld nicht.
 	Members int `json:"members,omitempty"`
+	// NoDiscordJoin: der Admin hat den Beitritt über Discord ausgeschaltet
+	// (Knopf „Beitreten“ entfällt); fehlendes Feld = erlaubt.
+	NoDiscordJoin bool `json:"no_discord_join,omitempty"`
+}
+
+// Werte von GroupInfo.You.
+const (
+	YouMember    = "mitglied"
+	YouRequested = "angefragt"
+	YouNone      = "keiner"
+)
+
+// GroupInfo ist die Antwort auf GET /v1/info (jedes gültige tunnel-Konto,
+// auch Nicht-Mitglieder): öffentliche Beschreibung, Mitgliederzahl und der
+// eigene Zustand (You: YouMember, YouRequested oder YouNone). Keine Namen,
+// keine Adressen.
+type GroupInfo struct {
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	Members     int    `json:"members"`
+	You         string `json:"you"`
 }
 
 // Maintenance beschreibt eine Wartung am Server, die der Admin mit

@@ -60,12 +60,12 @@ var errNoProcess = errors.New("Prozess läuft nicht")
 // openProc öffnet einen fremden Prozess; im Test austauschbar.
 var openProc = openProcess
 
-// keepDiscarded: So viele verworfene Stände (Home()/verworfen-*) bleiben
+// keepDiscarded: So viele verworfene Stände (Dir()/verworfen-*) bleiben
 // liegen; ältere werden beim Verwerfen gelöscht.
 const keepDiscarded = 2
 
 // DiscardedError meldet, dass ein lokaler Stand nicht hochgeladen, sondern
-// nach Path (Home()/verworfen-<Zeit>) verschoben wurde. Das ist kein
+// nach Path (Dir()/verworfen-<Zeit>) verschoben wurde. Das ist kein
 // Fehlschlag: Der Starter zeigt den Hinweis und macht weiter.
 type DiscardedError struct {
 	Path   string
@@ -87,7 +87,7 @@ func (e *DiscardedError) Error() string {
 //     gespeichert: Er wird auf der Basis LastUploaded… vorgemerkt und wie
 //     jeder vorgemerkte Stand nachgereicht. Sonst (er lief nicht mehr, kein
 //     RCON, keine Reaktion) wird er hart beendet und die Welt nach
-//     Home()/verworfen-<Zeit> verschoben, nie hochgeladen
+//     Dir()/verworfen-<Zeit> verschoben, nie hochgeladen
 //     (*DiscardedError).
 //   - Ist ein sauber gestoppter Stand vorgemerkt (PendingUpload), holt
 //     Recover einen Zuschlag zum Nachreichen auf seiner Basis. Bekommt es
@@ -340,7 +340,7 @@ func discardPending(st *group.State, world, reason string) error {
 	return &DiscardedError{Path: dest, Reason: reason}
 }
 
-// discardWorld verschiebt den Weltordner nach Home()/verworfen-<Ortszeit>
+// discardWorld verschiebt den Weltordner nach Dir()/verworfen-<Ortszeit>
 // und liefert das Ziel ("" wenn es keine Welt gab). Danach bleiben nur die
 // keepDiscarded neuesten verworfenen Stände liegen.
 func discardWorld(world string) (string, error) {
@@ -349,7 +349,7 @@ func discardWorld(world string) (string, error) {
 	} else if err != nil {
 		return "", err
 	}
-	home := group.Home()
+	home := group.Dir()
 	if err := os.MkdirAll(home, 0o755); err != nil {
 		return "", err
 	}

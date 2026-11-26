@@ -38,6 +38,25 @@ func TestDiscordActivityText(t *testing.T) {
 	}
 }
 
+func TestDiscordActivityBeitretenKnopf(t *testing.T) {
+	since := time.Unix(1_800_000_000, 0)
+	for _, c := range []struct {
+		name   string
+		status *api.Status
+		noJoin bool
+	}{
+		{"ohne Status", nil, false},
+		{"ohne Feld", &api.Status{}, false},
+		{"Admin erlaubt Beitritt", &api.Status{NoDiscordJoin: false}, false},
+		{"Admin sperrt Beitritt", &api.Status{NoDiscordJoin: true}, true},
+	} {
+		act, ok := discordActivity(phHosting, c.status, nil, since, "")
+		if !ok || act.NoJoin != c.noJoin {
+			t.Errorf("%s: %+v", c.name, act)
+		}
+	}
+}
+
 func TestDiscordTickSetztUndLoescht(t *testing.T) {
 	f := &discord.Fake{}
 	a := &App{ctx: context.Background(), presence: f, phase: phReady, me: &api.Me{MinecraftName: "Leon"}}

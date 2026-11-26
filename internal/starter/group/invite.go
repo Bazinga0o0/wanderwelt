@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -106,7 +107,7 @@ func (i *Invite) CreateTokenURL() string {
 
 // WithToken macht aus der Einladung und dem Token eine Gruppe.
 func (i *Invite) WithToken(token string) *Group {
-	return &Group{Coordinator: i.Coordinator, TunnelServer: i.TunnelServer, Token: strings.TrimSpace(token)}
+	return &Group{Coordinator: i.Coordinator, TunnelServer: i.TunnelServer, WebURL: i.WebURL, Token: strings.TrimSpace(token)}
 }
 
 // CheckToken prüft die Form eines eingefügten Tokens (nicht leer, eine
@@ -125,18 +126,24 @@ func CheckToken(token string) error {
 	return nil
 }
 
-// SaveGroup schreibt g (samt Token) atomar nach GroupPath(), mit Zugriff
-// nur für das eigene Windows-Konto (Vererbung entfernt). Scheitert das
-// Einschränken, wird die Datei nicht geschrieben: Der Token soll nie in
-// einer für andere lesbaren Datei liegen.
-func SaveGroup(g *Group) error {
+// SaveGroup schreibt g (samt Token) atomar in den Gruppenordner (siehe
+// AddGroup) und macht sie zur aktiven Gruppe, mit Zugriff nur für das eigene
+// Windows-Konto (Vererbung entfernt). Scheitert das Einschränken, wird die
+// Datei nicht geschrieben: Der Token soll nie in einer für andere lesbaren
+// Datei liegen.
+func SaveGroup(g *Group) error { return AddGroup(g, true) }
+
+func writeGroupFile(dir string, g *Group) error {
 	data, err := yaml.Marshal(g)
 	if err != nil {
 		return err
 	}
 	header := "# wanderwelt-Gruppendatei (von der Einrichtung geschrieben). Enthält deinen\n# persönlichen Token: nicht weitergeben.\n"
-	if err := os.MkdirAll(Home(), 0o755); err != nil {
+	if err := ensureNotSymlink(dir); err != nil {
 		return err
 	}
-	return writeFileAtomicPrivate(GroupPath(), append([]byte(header), data...))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	return writeFileAtomicPrivate(filepath.Join(dir, groupFileName), append([]byte(header), data...))
 }

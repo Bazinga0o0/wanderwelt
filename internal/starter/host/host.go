@@ -288,8 +288,8 @@ func (SystemClock) Now() time.Time { return time.Now() }
 // After feuert nach d.
 func (SystemClock) After(d time.Duration) <-chan time.Time { return time.After(d) }
 
-// DefaultDir ist der Server-Ordner: Home()/server (Welt in server/world).
-func DefaultDir() string { return filepath.Join(group.Home(), "server") }
+// DefaultDir ist der Server-Ordner: Dir()/server (Welt in server/world).
+func DefaultDir() string { return filepath.Join(group.Dir(), "server") }
 
 // Deps ist alles, was eine Sitzung braucht. Run wird direkt nach der
 // Antwort "host" auf Play aufgerufen.
@@ -309,13 +309,13 @@ type Deps struct {
 	Clock Clock
 	// TunnelCmd baut den tunnel-Prozess; er muss enden, wenn ctx endet
 	// (exec.CommandContext). nil: Paths.Tunnel mit
-	// "tcp 25565 --port 15565 --config Home()/tunnel.yaml", aber nur, wenn
+	// "tcp 25565 --port 15565 --config Dir()/tunnel.yaml", aber nur, wenn
 	// Group.TunnelServer gesetzt ist (sonst ohne tunnel, Dev-Modus).
 	TunnelCmd func(ctx context.Context) *exec.Cmd
 
 	// Dir ist der Server-Ordner (Welt in Dir/world); leer: DefaultDir().
 	Dir string
-	// Group: tunnel_server und Token für Home()/tunnel.yaml.
+	// Group: tunnel_server und Token für Dir()/tunnel.yaml.
 	Group *group.Group
 	// State wird fortgeschrieben (LastUploaded…, PendingUpload) und
 	// gespeichert; Run gehört er bis zum Ende.
@@ -334,7 +334,7 @@ type Deps struct {
 	// Schleife der Sitzung und darf nicht blockieren.
 	OnReady func()
 	// Discarded (darf nil sein) bekommt jeden lokalen Stand, den die Sitzung
-	// verwirft (nach Home()/verworfen-<Zeit> verschoben statt hochgeladen).
+	// verwirft (nach Dir()/verworfen-<Zeit> verschoben statt hochgeladen).
 	// Läuft in der Sitzung und darf nicht blockieren.
 	Discarded func(*DiscardedError)
 	// Dauerbetrieb (darf nil sein, heißt aus) meldet, ob dieser PC gerade im
@@ -2545,7 +2545,7 @@ func (s *Session) openMainPort() {
 	s.startSlot(slot, s.clk.Now())
 }
 
-func tunnelConfigPath() string { return filepath.Join(group.Home(), "tunnel.yaml") }
+func tunnelConfigPath() string { return filepath.Join(group.Dir(), "tunnel.yaml") }
 
 // openTunnelLog öffnet Home()/logs/tunnel.log zum Anhängen (nil bei Fehler).
 func openTunnelLog() *os.File {
@@ -2566,7 +2566,7 @@ type tunnelConfig struct {
 	InsecureSkipVerify bool   `yaml:"insecure_skip_verify,omitempty"`
 }
 
-// writeTunnelConfig schreibt Home()/tunnel.yaml für den tunnel-Client. Die
+// writeTunnelConfig schreibt Dir()/tunnel.yaml für den tunnel-Client. Die
 // Datei enthält den persönlichen Token; nur der eigene Benutzer (und
 // SYSTEM) darf sie lesen.
 func writeTunnelConfig(g *group.Group) error {

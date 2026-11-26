@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"gopkg.in/yaml.v3"
 
@@ -70,6 +71,36 @@ type Config struct {
 	Members       []Member          `yaml:"members"`
 	WorldSettings map[string]string `yaml:"world_settings"`
 	ManifestFile  string            `yaml:"manifest_file"`
+	// Gruppe: Titel und Beschreibung für GET /v1/info (Entdecken-Reiter).
+	Gruppe Gruppe `yaml:"gruppe"`
+	// NoDiscordJoin: beitritt_ueber_discord ist false; Standard (Schlüssel
+	// fehlt): Beitritt über Discord erlaubt.
+	NoDiscordJoin bool `yaml:"-"`
+}
+
+// Grenzen für gruppe.titel und gruppe.beschreibung (Zeichen).
+const (
+	MaxGroupTitle       = 80
+	MaxGroupDescription = 400
+)
+
+// Gruppe ist die öffentliche Beschreibung der Gruppe (nur Text, nie HTML).
+type Gruppe struct {
+	Titel        string `yaml:"titel"`
+	Beschreibung string `yaml:"beschreibung"`
+}
+
+// checkText prüft Länge (in Zeichen) und Steuerzeichen (auch Zeilenumbruch).
+func checkText(s string, max int) error {
+	if n := len([]rune(s)); n > max {
+		return fmt.Errorf("%d Zeichen, erlaubt sind höchstens %d", n, max)
+	}
+	for _, r := range s {
+		if unicode.IsControl(r) {
+			return errors.New("Steuerzeichen (auch Zeilenumbruch) sind nicht erlaubt")
+		}
+	}
+	return nil
 }
 
 // Member ist ein Mitglied der Gruppe: tunnel-Konto (E-Mail) und
@@ -90,6 +121,8 @@ type rawConfig struct {
 	StorageBudget    string `yaml:"storage_budget"`
 	SnapshotInterval string `yaml:"snapshot_interval"`
 	EmptyTimeout     string `yaml:"empty_timeout"`
+	// BeitrittUeberDiscord: nil (fehlt) heißt erlaubt.
+	BeitrittUeberDiscord *bool `yaml:"beitritt_ueber_discord"`
 }
 
 // Load liest die Konfiguration aus path. Unbekannte Schlüssel, ein
@@ -107,6 +140,16 @@ func Load(path string) (*Config, error) {
 	default:
 		return nil, fmt.Errorf("%s: auth.mode muss \"tunneld\" oder \"dev\" sein, nicht %q", path, c.Auth.Mode)
 	}
+
+	c.Gruppe.Titel = strings.TrimSpace(c.Gruppe.Titel)
+	c.Gruppe.Beschreibung = strings.TrimSpace(c.Gruppe.Beschreibung)
+	if err := checkText(c.Gruppe.Titel, MaxGroupTitle); err != nil {
+		return nil, fmt.Errorf("%s: gruppe.titel: %w", path, err)
+	}
+	if err := checkText(c.Gruppe.Beschreibung, MaxGroupDescription); err != nil {
+		return nil, fmt.Errorf("%s: gruppe.beschreibung: %w", path, err)
+	}
+	c.NoDiscordJoin = raw.BeitrittUeberDiscord != nil && !*raw.BeitrittUeberDiscord
 
 	seen := make(map[string]bool, len(c.Members))
 	for i, m := range c.Members {

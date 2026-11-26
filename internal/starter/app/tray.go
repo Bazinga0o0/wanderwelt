@@ -153,7 +153,7 @@ func (a *App) updateTray(m *trayMenu) {
 		m.iconSet, m.shownIcon = true, ph
 	}
 
-	line1 := "wanderwelt – " + ph.String()
+	line1 := "wanderwelt" + a.trayGruppe() + " – " + ph.String()
 	switch {
 	case ph == phError && lastErr != "":
 		line1 += ": " + lastErr
@@ -278,7 +278,9 @@ func (a *App) pollStatus(refreshMe bool) {
 		a.kickRecoverLocked() // wieder erreichbar: Vorgemerktes gleich nachreichen
 	}
 	wartungVorbei := err == nil && st.Maintenance == nil && a.status != nil && a.status.Maintenance != nil
-	a.status, a.statusErr = st, err
+	if a.c == c { // nicht, wenn die Gruppe inzwischen gewechselt wurde
+		a.status, a.statusErr = st, err
+	}
 	// Mitspieler, aber niemand hostet mehr: wieder bereit (solange watchJoin
 	// läuft, entscheidet das dort, ob neu gefragt wird).
 	if err == nil && st.Host == nil && !handoverActive(st) && a.phase == phJoined && a.busy == "" && a.joinCancel == nil {
@@ -397,6 +399,22 @@ func (a *App) chooseGroup() *resultDialog {
 	me, err := memberCheck(a.ctx, g)
 	if err != nil {
 		return errorDialog("Mit dieser Gruppendatei geht es nicht:\n\n" + explain(err))
+	}
+	// Eine Datei einer anderen Gruppe ersetzt nie die aktive (Zustand, Welt und
+	// Profil der aktiven blieben sonst stehen): Sie wird als weitere Gruppe
+	// hinzugefügt; gewählt wird sie im Fenster.
+	if id, err := group.IDFromCoordinator(g.Coordinator); err == nil {
+		if act := group.ActiveID(); act != "" && id != act {
+			if group.Legacy() {
+				return errorDialog("Diese Gruppendatei gehört zu einer anderen Gruppe als die eingerichtete. " +
+					"Das bisherige Datenlayout ließ sich nicht auf mehrere Gruppen umstellen (Details im Log).")
+			}
+			if _, err := group.InstallGroupInactive(path); err != nil {
+				return errorDialog("Gruppendatei übernehmen: " + err.Error())
+			}
+			log.Printf("Gruppe %s hinzugefügt (Mitglied %s)", id, me.Email)
+			return infoDialog("Die Gruppe " + id + " ist hinzugefügt. Wähle sie im wanderwelt-Fenster oben bei „Gruppe“ aus.")
+		}
 	}
 	if _, err := group.InstallGroup(path); err != nil {
 		return errorDialog("Gruppendatei übernehmen: " + err.Error())

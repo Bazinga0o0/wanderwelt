@@ -17,6 +17,8 @@
 //	                            Text (Standard 300, höchstens 2000)
 //	GET  /v1/mitglieder       → []api.MemberInfo (JSON)
 //	GET  /v1/beitritte        → []api.JoinRequestInfo (JSON; nur Admins)
+//	GET  /v1/entdecken[?neu=1] → Entdecken (JSON): gelistete Gruppen der tunnel-Server
+//	POST /v1/{gruppe|entdeckenbeitritt} = {"id": …} bzw. {"url": …, "name": …}
 //	POST /v1/{play|beenden|beendenohne|import|profil|autostart|zurueckholen|speicher|rolle|mcname|beitritt|logordner}
 //
 // Körper der Aktionen (JSON): import = {"dir": …, "ohne_spielerdatei":
@@ -73,7 +75,15 @@ type Zustand struct {
 	// Gruppencode: Beitritts-Code dieser Gruppe (nur öffentliche Adressen,
 	// nie ein Token) zum Weitergeben; leer: nicht möglich.
 	Gruppencode string
-	Hinweise    []Hinweis // die letzten 20, Seq aufsteigend
+	// Gruppen: die eingerichteten Gruppen dieses PCs (nur lokal sichtbar), die
+	// aktive ist markiert; WechselSperre: Grund (deutscher Text), warum gerade
+	// nicht gewechselt werden kann, sonst leer.
+	Gruppen       []GruppeEintrag
+	WechselSperre string
+	// ZeigeEntdecken: Das Fenster soll zum Reiter „Entdecken“ springen
+	// (wanderwelt://beitreten bei mehreren Gruppen); gilt einige Sekunden.
+	ZeigeEntdecken bool
+	Hinweise       []Hinweis // die letzten 20, Seq aufsteigend
 }
 
 // Notfallkopie ist der Stand der Notfallkopie dieses PCs (Reiter Hosten).
@@ -423,3 +433,58 @@ func UebergabeText(h *api.HandoverState) string {
 // wenn andere Spieler online sind (Tray und Fenster).
 const UebergabeFrage = "Die Welt wird an den besten PC der Mitspieler übergeben; ihr spielt nach kurzer Pause weiter. " +
 	"Klappt das nicht, geht es auf deinem PC normal weiter."
+
+// GruppeEintrag ist eine eingerichtete Gruppe in der Auswahl des Fensters.
+// Titel kann leer sein (noch nicht vom Koordinator geholt); dann zeigt das
+// Fenster die Kennung.
+type GruppeEintrag struct {
+	ID    string
+	Titel string
+	Aktiv bool
+}
+
+// Werte von EntdeckenEintrag.Zustand.
+const (
+	EntdeckenMitglied  = "mitglied"
+	EntdeckenAngefragt = "angefragt"
+	EntdeckenKeiner    = "keiner"
+	EntdeckenUnbekannt = "unbekannt" // /v1/info der Gruppe war nicht abrufbar
+)
+
+// EntdeckenEintrag ist eine gelistete Gruppe im Reiter „Entdecken“. Titel und
+// Beschreibung sind fremder Text (geprüft, aber nie als HTML einzufügen).
+type EntdeckenEintrag struct {
+	URL          string // Koordinator-Adresse (Kennung für „Beitritt anfragen“)
+	Titel        string
+	Beschreibung string
+	Mitglieder   int
+	Zustand      string // Entdecken…
+	Lokal        bool   // schon in der Gruppen-Auswahl dieses PCs
+	Fehler       string // /v1/info nicht abrufbar (Text für den Nutzer)
+}
+
+// Entdecken ist die Antwort auf GET /v1/entdecken.
+type Entdecken struct {
+	Gruppen []EntdeckenEintrag
+	// Hinweise: leise Meldungen zu den abgefragten tunnel-Servern (kein
+	// Verzeichnis, Token abgelehnt, überlastet …), ein Satz je Fall.
+	Hinweise []string
+	// MinecraftName: Vorschlag für „Beitritt anfragen“ (aus der aktiven Gruppe
+	// oder dem Minecraft-Launcher; leer: unbekannt).
+	MinecraftName string
+	Stand         time.Time
+}
+
+// Entdecken holt die gelisteten Gruppen der tunnel-Server dieses PCs
+// (neu: das Verzeichnis jetzt abfragen statt des kurz gemerkten Stands).
+func (c *Client) Entdecken(ctx context.Context, neu bool) (*Entdecken, error) {
+	path := "/v1/entdecken"
+	if neu {
+		path += "?neu=1"
+	}
+	var e Entdecken
+	if err := c.getJSON(ctx, path, &e); err != nil {
+		return nil, err
+	}
+	return &e, nil
+}

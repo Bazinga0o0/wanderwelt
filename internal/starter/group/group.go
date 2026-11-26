@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -28,7 +29,8 @@ const (
 	stateFileName = "state.json"
 )
 
-// Home ist das Datenverzeichnis des Starters: WANDERWELT_HOME, falls
+// Home ist die Wurzel des Datenverzeichnisses des Starters (gemeinsame Dateien
+// und gruppen\<id>, siehe gruppen.go): WANDERWELT_HOME, falls
 // gesetzt, sonst %LOCALAPPDATA%\wanderwelt. Außerhalb von Windows (Tests,
 // Entwicklung) $HOME/.local/share/wanderwelt.
 func Home() string {
@@ -61,8 +63,9 @@ func HomeKey() string {
 	return hex.EncodeToString(sum[:8])
 }
 
-// GroupPath ist der Ort der installierten Gruppendatei: Home()/gruppe.yaml.
-func GroupPath() string { return filepath.Join(Home(), groupFileName) }
+// GroupPath ist der Ort der Gruppendatei der aktiven Gruppe: Dir()/gruppe.yaml
+// (siehe gruppen.go).
+func GroupPath() string { return filepath.Join(Dir(), groupFileName) }
 
 // Group ist der Inhalt der Gruppendatei (siehe deploy/gruppe.example.yaml).
 type Group struct {
@@ -79,6 +82,10 @@ type Group struct {
 	// mit selbst signiertem Zertifikat), nie für die Verbindung zum
 	// Koordinator.
 	TunnelInsecureSkipVerify bool `yaml:"tunnel_insecure_skip_verify"`
+	// WebURL ist optional die Webseite des tunnel-Servers (Konto, Token und
+	// Verzeichnis der Gruppen für den Reiter „Entdecken“, https). Fehlt sie,
+	// gilt https://<Host von tunnel_server> (siehe WebBase).
+	WebURL string `yaml:"web_url,omitempty"`
 }
 
 // LoadGroup liest und prüft die Gruppendatei aus path. Unbekannte Schlüssel
@@ -94,8 +101,16 @@ func LoadGroup(path string) (*Group, error) {
 }
 
 // InstallGroup prüft die Gruppendatei src und kopiert sie unverändert
-// (samt Kommentaren) atomar nach GroupPath().
-func InstallGroup(src string) (*Group, error) {
+// (samt Kommentaren) atomar nach gruppen/<id>/gruppe.yaml und macht sie zur
+// aktiven Gruppe.
+func InstallGroup(src string) (*Group, error) { return installGroup(src, true) }
+
+// InstallGroupInactive wie InstallGroup, wählt die Gruppe aber nicht aus (eine
+// weitere Gruppe hinzufügen, ohne dass sich unter einem laufenden Betrieb die
+// aktive Gruppe ändert).
+func InstallGroupInactive(src string) (*Group, error) { return installGroup(src, false) }
+
+func installGroup(src string, activate bool) (*Group, error) {
 	data, err := os.ReadFile(src)
 	if err != nil {
 		return nil, err
@@ -104,11 +119,23 @@ func InstallGroup(src string) (*Group, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(Home(), 0o755); err != nil {
+	dir, id, err := target(g)
+	if err != nil {
 		return nil, err
 	}
-	if err := writeFileAtomic(GroupPath(), data); err != nil {
+	if err := ensureNotSymlink(dir); err != nil {
 		return nil, err
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, err
+	}
+	if err := writeFileAtomic(filepath.Join(dir, groupFileName), data); err != nil {
+		return nil, err
+	}
+	if activate && id != "" {
+		if err := setActiveFile(id); err != nil {
+			return nil, err
+		}
 	}
 	return g, nil
 }
@@ -128,7 +155,13 @@ func parseGroup(name string, data []byte) (*Group, error) {
 	g.TunnelServer = strings.TrimSpace(g.TunnelServer)
 	g.Token = strings.TrimSpace(g.Token)
 	g.DevIdentityEmail = strings.TrimSpace(g.DevIdentityEmail)
+	g.WebURL = strings.TrimRight(strings.TrimSpace(g.WebURL), "/")
 
+	if g.WebURL != "" {
+		if err := checkWebURL(g.WebURL); err != nil {
+			return nil, fmt.Errorf("%s: web_url: %w", name, err)
+		}
+	}
 	if err := checkCoordinator(g.Coordinator); err != nil {
 		return nil, fmt.Errorf("%s: coordinator: %w", name, err)
 	}
@@ -201,15 +234,19 @@ type State struct {
 	Optin bool `json:"optin"`
 }
 
-func statePath() string { return filepath.Join(Home(), stateFileName) }
-
-// LoadState liest Home()/state.json. Fehlt die Datei, ist das ein leerer
-// Zustand (frische Installation), kein Fehler.
+// LoadState liest Dir()/state.json der aktiven Gruppe. Fehlt die Datei, ist
+// das ein leerer Zustand (frische Installation), kein Fehler.
 func LoadState() (*State, error) {
-	path := statePath()
+	return loadStateIn(Dir())
+}
+
+func loadStateIn(dir string) (*State, error) {
+	path := filepath.Join(dir, stateFileName)
 	data, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
-		return &State{}, nil
+		s := &State{}
+		stateDirs.Store(s, dir)
+		return s, nil
 	}
 	if err != nil {
 		return nil, err
@@ -218,20 +255,28 @@ func LoadState() (*State, error) {
 	if err := json.Unmarshal(data, &s); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
+	stateDirs.Store(&s, dir)
 	return &s, nil
 }
 
 // Save schreibt den Zustand atomar (Temp-Datei, dann Umbenennen) nach
-// Home()/state.json.
+// state.json im Ordner, aus dem er geladen wurde (neuer Zustand: Dir()).
 func (s *State) Save() error {
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(Home(), 0o755); err != nil {
+	dir := ""
+	if v, ok := stateDirs.Load(s); ok {
+		dir = v.(string)
+	}
+	if dir == "" {
+		dir = Dir()
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	return writeFileAtomic(statePath(), append(data, '\n'))
+	return writeFileAtomic(filepath.Join(dir, stateFileName), append(data, '\n'))
 }
 
 // writeFileAtomic schreibt data in eine Temp-Datei neben path und benennt sie
@@ -289,3 +334,9 @@ func renameRetry(from, to string) error {
 	}
 	return err
 }
+
+// stateDirs merkt sich zu jedem geladenen Zustand den Gruppenordner, aus dem
+// er kam: Save schreibt immer dorthin, auch wenn die aktive Gruppe
+// inzwischen gewechselt hat (nie in eine andere Gruppe schreiben). Eine
+// Map statt eines Feldes, damit Zustände weiter mit == vergleichbar bleiben.
+var stateDirs sync.Map // *State -> string

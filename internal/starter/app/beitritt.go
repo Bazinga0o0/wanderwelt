@@ -151,6 +151,10 @@ func (a *App) chooseGroupInviteRun(ctx context.Context) (*group.Group, *api.Me, 
 	}
 	first := true
 	for {
+		if g == nil && a.presetToken != "" {
+			// Token aus „Entdecken“ der Einrichtung: nicht noch einmal fragen.
+			g, onDisk, a.presetToken = inv.WithToken(a.presetToken), false, ""
+		}
 		if g == nil {
 			tok, useFile, err := askToken(inv, first)
 			if err != nil {

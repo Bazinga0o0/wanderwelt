@@ -77,7 +77,10 @@ func activityPayload(a *Activity, pid int, nonce string) ([]byte, error) {
 			Details: Details,
 			State:   a.State,
 			Assets:  assets{LargeImage: LargeImage, LargeText: Details},
-			Buttons: []button{{Label: JoinText, URL: JoinPage}, {Label: ButtonText, URL: ButtonURL}},
+			Buttons: []button{{Label: JoinText, URL: JoinURL}, {Label: ButtonText, URL: ButtonURL}},
+		}
+		if a.NoJoin {
+			aj.Buttons = aj.Buttons[1:]
 		}
 		// Party nur als Anzeige „N von M“: Discord erlaubt kein secrets.join
 		// zusammen mit Knöpfen.

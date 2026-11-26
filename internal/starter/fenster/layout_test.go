@@ -3,12 +3,14 @@ package fenster
 import (
 	"fmt"
 	"image"
+	"strings"
 	"testing"
 	"time"
 
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/unit"
+	"gioui.org/widget"
 
 	"github.com/Bazinga0o0/wanderwelt/internal/api"
 	"github.com/Bazinga0o0/wanderwelt/internal/starter/fensterapi"
@@ -152,6 +154,38 @@ func beispielAnsichten(jetzt time.Time) []ansicht {
 	add("startet", schnappschuss{verb: startet}, reiterStart, nil)
 	add("verbindet", schnappschuss{verb: verbindet}, reiterStart, nil)
 	add("antwortet-falsch", schnappschuss{verb: verbunden, zErr: "die laufende wanderwelt-Version kennt das noch nicht – bitte wanderwelt neu starten"}, reiterStart, nil)
+	mehrere := beispielZustand(jetzt, false, true)
+	mehrere.Gruppen = []fensterapi.GruppeEintrag{{ID: "wanderwelt.example.de", Titel: "Wandergruppe", Aktiv: true},
+		{ID: "zweite.example.de", Titel: "Eine Gruppe mit einem sehr langen Titel, der gekürzt werden muss"}, {ID: "dritte.example.de"}}
+	add("start-mehrere-gruppen", voll(mehrere), reiterStart, nil)
+	gesperrt := beispielZustand(jetzt, false, true)
+	gesperrt.Gruppen = mehrere.Gruppen
+	gesperrt.WechselSperre = "Du hostest oder spielst gerade."
+	add("start-gruppen-gesperrt", voll(gesperrt), reiterStart, func(u *oberflaeche, _ time.Time) {
+		u.gruppen.knoepfe = map[string]*widget.Clickable{"zweite.example.de": new(widget.Clickable)}
+		u.gruppen.knoepfe["zweite.example.de"].Click()
+	})
+	entd := beispielZustand(jetzt, false, true)
+	liste := &fensterapi.Entdecken{MinecraftName: "Steve_1", Gruppen: []fensterapi.EntdeckenEintrag{
+		{URL: "https://a.example.org", Titel: "Wandergruppe", Beschreibung: "Survival mit Freunden. Wir spielen abends.", Mitglieder: 7, Zustand: fensterapi.EntdeckenMitglied, Lokal: true},
+		{URL: "https://b.example.org", Titel: "<b>Fremde</b> Gruppe mit einem sehr langen Titel, der umbrechen muss, weil er so lang ist", Beschreibung: strings.Repeat("Lange Beschreibung. ", 20), Mitglieder: 1, Zustand: fensterapi.EntdeckenKeiner},
+		{URL: "https://c.example.org", Titel: "Angefragt", Mitglieder: 12, Zustand: fensterapi.EntdeckenAngefragt},
+		{URL: "https://d.example.org", Titel: "Kaputt", Zustand: fensterapi.EntdeckenUnbekannt, Fehler: "Der Koordinator dieser Gruppe ist nicht erreichbar."},
+	}, Hinweise: []string{"tunnel.example.org hat keine gelisteten Gruppen."}}
+	mitListe := voll(entd)
+	mitListe.entdecken, mitListe.entdeckenAb = liste, jetzt
+	add("entdecken", mitListe, reiterEntdecken, nil)
+	add("entdecken-formular", mitListe, reiterEntdecken, func(u *oberflaeche, _ time.Time) {
+		u.entd.nameFuer, u.entd.nameTitel, u.entd.nameFehler = "https://b.example.org", "Fremde Gruppe", "Der Name besteht aus 3 bis 16 Buchstaben, Ziffern oder Unterstrichen."
+		u.entd.nameEd.SetText("Steve_1")
+	})
+	add("entdecken-laedt", voll(entd), reiterEntdecken, nil)
+	fehlerE := voll(entd)
+	fehlerE.entdeckenErr = "Steuerung antwortet nicht"
+	add("entdecken-fehler", fehlerE, reiterEntdecken, nil)
+	leerE := voll(entd)
+	leerE.entdecken = &fensterapi.Entdecken{}
+	add("entdecken-leer", leerE, reiterEntdecken, nil)
 	return as
 }
 

@@ -1,6 +1,6 @@
 // Package bench erhebt die Messwerte, die ein Starter für die Wahl des Hosts
 // meldet (Leistung eines CPU-Kerns, Upload zum Koordinator, RAM), und
-// verwaltet das Leistungsprofil des PCs (Home()/profil.yaml), mit dem er den
+// verwaltet das Leistungsprofil des PCs (Dir()/profil.yaml), mit dem er den
 // Minecraft-Server startet, wenn er hostet.
 package bench
 
@@ -189,10 +189,10 @@ func defaultProfile(totalMB, cores int) api.Profile {
 // atLeastGB: totalMB (MiB) erreicht mindestens 90 % von gb GiB.
 func atLeastGB(totalMB, gb int) bool { return totalMB*10 >= gb*1024*9 }
 
-// ProfilePath ist der Ort des Leistungsprofils: Home()/profil.yaml.
-func ProfilePath() string { return filepath.Join(group.Home(), profileFileName) }
+// ProfilePath ist der Ort des Leistungsprofils: Dir()/profil.yaml.
+func ProfilePath() string { return filepath.Join(group.Dir(), profileFileName) }
 
-// LoadProfile liest Home()/profil.yaml.
+// LoadProfile liest Dir()/profil.yaml.
 //
 // Fehlt die Datei, ist das Ergebnis DefaultProfile() ohne Fehler (wie bei
 // group.LoadState); wer wissen will, ob sie existiert, prüft ProfilePath()
@@ -221,7 +221,7 @@ func LoadProfile() (api.Profile, error) {
 }
 
 // SaveProfile prüft p und schreibt es atomar (Temp-Datei, dann Umbenennen)
-// nach Home()/profil.yaml.
+// nach Dir()/profil.yaml.
 func SaveProfile(p api.Profile) error {
 	if err := checkProfile(p); err != nil {
 		return err
@@ -230,7 +230,7 @@ func SaveProfile(p api.Profile) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(group.Home(), 0o755); err != nil {
+	if err := os.MkdirAll(group.Dir(), 0o755); err != nil {
 		return err
 	}
 	return writeFileAtomic(ProfilePath(), append([]byte(profileHeader), data...))

@@ -25,6 +25,11 @@ const (
 	staendeTakt = 30 * time.Second
 	// mitgliederTakt: Mitgliederliste bei sichtbarem Reiter „Mitglieder“.
 	mitgliederTakt = 15 * time.Second
+	// entdeckenTakt: Entdecken bei sichtbarem Reiter (die Instanz merkt sich den
+	// Stand zusätzlich 20 s).
+	entdeckenTakt = 60 * time.Second
+	// entdeckenFrist: Obergrenze der Abfrage (die Instanz fragt mehrere Server).
+	entdeckenFrist = 50 * time.Second
 	// logTakt: Log bei sichtbarem Reiter „Log“.
 	logTakt = 3 * time.Second
 	// startWarten: So lange wartet das Fenster nach dem Starten auf die
@@ -47,6 +52,7 @@ const (
 	reiterStart reiter = iota
 	reiterWelt
 	reiterHosten
+	reiterEntdecken
 	reiterMitglieder
 	reiterLog
 	anzahlReiter
@@ -70,6 +76,7 @@ type quelle interface {
 	Log(ctx context.Context, zeilen int) (string, error)
 	Mitglieder(ctx context.Context) ([]api.MemberInfo, error)
 	Beitritte(ctx context.Context) ([]api.JoinRequestInfo, error)
+	Entdecken(ctx context.Context, neu bool) (*fensterapi.Entdecken, error)
 	Aktion(ctx context.Context, name string, body any) error
 }
 
@@ -105,6 +112,13 @@ type schnappschuss struct {
 	// Offene Beitrittsanfragen (kommen mit den Mitgliedern).
 	anfragen    []api.JoinRequestInfo
 	anfragenErr string
+
+	// Entdecken: gelistete Gruppen der tunnel-Server (Abfrage läuft im
+	// Hintergrund, sie kann länger dauern).
+	entdecken       *fensterapi.Entdecken
+	entdeckenErr    string
+	entdeckenAb     time.Time
+	entdeckenLaeuft bool
 }
 
 // daten hält Verbindung und Schnappschuss.
@@ -112,7 +126,9 @@ type daten struct {
 	// staendeNeu zählt die Wünsche „Stände neu laden“ (unter mu).
 	staendeNeu int
 	// Takte (Tests verkürzen sie).
-	takt, staendeTakt, mitgliederTakt, logTakt, startWarten time.Duration
+	takt, staendeTakt, mitgliederTakt, logTakt, startWarten, entdeckenTakt time.Duration
+	// entdeckenNeu: Das Verzeichnis jetzt neu abfragen (Knopf „Aktualisieren“; unter mu).
+	entdeckenNeu bool
 	// bildFrist: Kommt so lange nach einem Neuzeichnen-Wunsch kein Bild,
 	// ruht die Abfrage (Oberfläche hängt).
 	bildFrist time.Duration
@@ -158,6 +174,7 @@ func neueDaten(starte func() error, neuZeichnen func()) *daten {
 		staendeTakt:    staendeTakt,
 		mitgliederTakt: mitgliederTakt,
 		logTakt:        logTakt,
+		entdeckenTakt:  entdeckenTakt,
 		startWarten:    startWarten,
 		bildFrist:      bildFrist,
 		verbinde: func() (quelle, error) {
@@ -352,6 +369,12 @@ func (d *daten) runde(ctx context.Context) {
 	holeSaves := r == reiterWelt && admin && d.savesWunsch && faellig(n.savesAb, jetzt, d.staendeTakt)
 	holeLog := r == reiterLog && faellig(n.logAb, jetzt, d.logTakt)
 	holeMitglieder := r == reiterMitglieder && admin && faellig(n.mitgliederAb, jetzt, d.mitgliederTakt)
+	holeEntdecken := r == reiterEntdecken && !n.entdeckenLaeuft && (d.entdeckenNeu || faellig(n.entdeckenAb, jetzt, d.entdeckenTakt))
+	neuHolen := d.entdeckenNeu
+	if holeEntdecken {
+		d.entdeckenNeu = false
+		n.entdeckenLaeuft = true
+	}
 	d.s = n
 	d.mu.Unlock()
 	if err == nil {
@@ -359,6 +382,9 @@ func (d *daten) runde(ctx context.Context) {
 	}
 
 	// Listen nacheinander (die Instanz ist lokal; keine Parallelität nötig).
+	if holeEntdecken {
+		go d.entdeckenHolen(ctx, c, neuHolen)
+	}
 	if holeStaende {
 		d.mu.Lock()
 		neu := d.staendeNeu
@@ -474,6 +500,7 @@ func gleich(a, b schnappschuss) bool {
 	a.savesAb, b.savesAb = time.Time{}, time.Time{}
 	a.logAb, b.logAb = time.Time{}, time.Time{}
 	a.mitgliederAb, b.mitgliederAb = time.Time{}, time.Time{}
+	a.entdeckenAb, b.entdeckenAb = time.Time{}, time.Time{}
 	return reflect.DeepEqual(a, b)
 }
 
@@ -575,4 +602,35 @@ func (d *daten) setzeVeraltet(v bool) {
 	if ch && d.neuZeichnen != nil {
 		d.neuZeichnen()
 	}
+}
+
+// entdeckenHolen fragt „Entdecken“ in einer eigenen Goroutine (die Instanz
+// fragt Verzeichnis und Gruppen ab; das kann dauern und soll den Zustand nicht
+// aufhalten).
+func (d *daten) entdeckenHolen(ctx context.Context, c quelle, neu bool) {
+	actx, cancel := context.WithTimeout(ctx, entdeckenFrist)
+	e, err := c.Entdecken(actx, neu)
+	cancel()
+	if ctx.Err() != nil {
+		return
+	}
+	d.mu.Lock()
+	d.s.entdeckenLaeuft = false
+	d.s.entdeckenAb = d.jetzt()
+	if err != nil {
+		d.s.entdeckenErr = err.Error()
+	} else {
+		d.s.entdecken, d.s.entdeckenErr = e, ""
+	}
+	d.mu.Unlock()
+	d.malen(true)
+}
+
+// entdeckenNeuLaden verlangt eine neue Abfrage jetzt („Aktualisieren“, nach
+// einer Beitrittsanfrage).
+func (d *daten) entdeckenNeuLaden() {
+	d.mu.Lock()
+	d.entdeckenNeu = true
+	d.mu.Unlock()
+	d.wecken()
 }

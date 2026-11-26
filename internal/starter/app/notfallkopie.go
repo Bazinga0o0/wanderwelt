@@ -29,7 +29,7 @@ package app
 // im Log, einmal je Start des Starters zusätzlich als Hinweis.
 //
 // Der Haken (und die Angaben zur letzten Kopie) stehen lokal in
-// Home()/notfallkopie.json; der Koordinator erfährt nichts davon.
+// Dir()/notfallkopie.json; der Koordinator erfährt nichts davon.
 
 import (
 	"cmp"
@@ -56,7 +56,7 @@ import (
 const (
 	// notfallName ist der Ordner der Notfallkopie in den Dokumenten.
 	notfallName = "wanderwelt-Notfallkopie"
-	// notfallDatei: Einstellung und Angaben zur letzten Kopie in Home().
+	// notfallDatei: Einstellung und Angaben zur letzten Kopie in Dir() (Gruppenordner).
 	notfallDatei = "notfallkopie.json"
 	// notfallLiesmich: Datei mit Erklärung im Ordner der Kopie.
 	notfallLiesmich = "LIESMICH.txt"
@@ -160,9 +160,13 @@ type notfallState struct {
 	wg       sync.WaitGroup // laufende Kopien
 }
 
-// notfallEinstellung ist der Inhalt von Home()/notfallkopie.json.
+// notfallEinstellung ist der Inhalt von Dir()/notfallkopie.json.
 type notfallEinstellung struct {
-	Aus        bool      `json:"aus,omitempty"` // Haken aus (fehlt: an)
+	Aus bool `json:"aus,omitempty"` // Haken aus (fehlt: an)
+	// Ordner: Name des Ordners der Notfallkopie in den Dokumenten (leer: je
+	// Gruppe wanderwelt-Notfallkopie-<id>; die aus dem alten Einzel-Layout
+	// migrierte Gruppe behält wanderwelt-Notfallkopie).
+	Ordner     string    `json:"ordner,omitempty"`
 	WorldID    string    `json:"world_id,omitempty"`
 	Generation int64     `json:"generation,omitempty"`
 	Zeit       time.Time `json:"zeit,omitzero"`
@@ -172,7 +176,7 @@ type notfallEinstellung struct {
 	NichtHochgeladen bool `json:"nicht_hochgeladen,omitempty"`
 }
 
-func notfallPfad() string { return filepath.Join(group.Home(), notfallDatei) }
+func notfallPfad() string { return filepath.Join(group.Dir(), notfallDatei) }
 
 func ladeNotfall() (notfallEinstellung, error) {
 	var e notfallEinstellung
@@ -194,10 +198,10 @@ func speichereNotfall(e notfallEinstellung) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(group.Home(), 0o755); err != nil {
+	if err := os.MkdirAll(group.Dir(), 0o755); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(group.Home(), notfallDatei+".*.tmp")
+	tmp, err := os.CreateTemp(group.Dir(), notfallDatei+".*.tmp")
 	if err != nil {
 		return err
 	}
@@ -245,7 +249,7 @@ func (a *App) notfallZustand() fensterapi.Notfallkopie {
 	if rerr != nil {
 		return n
 	}
-	n.Ordner = filepath.Join(root, notfallName)
+	n.Ordner = filepath.Join(root, notfallOrdnerName())
 	if fi, err := os.Stat(n.Ordner); err == nil && fi.IsDir() {
 		n.Vorhanden = true
 		n.Zeit, n.Groesse, n.NichtHochgeladen = e.Zeit, e.Groesse, e.NichtHochgeladen
@@ -377,7 +381,7 @@ func (a *App) notfallKopieren(ctx context.Context, c host.Committed) error {
 	if err := speichereNotfall(e); err != nil {
 		log.Printf("Notfallkopie: Angaben nicht gespeichert: %v", err)
 	}
-	log.Printf("Notfallkopie: Stand %s/%d (%s, hochgeladen: %v) in %s, %v", c.WorldID, c.Generation, humanSize(size), !c.NotUploaded, filepath.Join(root, notfallName), time.Since(began).Round(time.Millisecond))
+	log.Printf("Notfallkopie: Stand %s/%d (%s, hochgeladen: %v) in %s, %v", c.WorldID, c.Generation, humanSize(size), !c.NotUploaded, filepath.Join(root, notfallOrdnerName()), time.Since(began).Round(time.Millisecond))
 	return nil
 }
 
@@ -388,7 +392,7 @@ func schreibeNotfallkopie(ctx context.Context, root string, c host.Committed, no
 	if fi, err := os.Stat(c.Dir); err != nil || !fi.IsDir() {
 		return 0, fmt.Errorf("Stand %s nicht lesbar", c.Dir)
 	}
-	final := filepath.Join(root, notfallName)
+	final := filepath.Join(root, notfallOrdnerName())
 	neu, alt := final+".neu", final+".alt"
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return 0, err

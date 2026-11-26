@@ -226,14 +226,34 @@ func TestHandshakeUndAktivitaet(t *testing.T) {
 	if cmd.Nonce == "" || cmd.Args.PID == 0 {
 		t.Errorf("Befehl: %s", acts[0])
 	}
-	if a.Details != "wanderwelt" || a.State != "mit 3 Freunden" || a.Timestamps.Start != start.Unix() ||
+	if a.Details != "Minecraft über Wanderwelt" || a.State != "mit 3 Freunden" || a.Timestamps.Start != start.Unix() ||
 		a.Assets.LargeImage != "wanderwelt-discord-1024" || len(a.Buttons) != 2 ||
-		a.Buttons[0].Label != "Beitreten" || a.Buttons[0].URL != "https://bazinga0o0.github.io/wanderwelt/beitreten/" ||
+		a.Buttons[0].Label != "Beitreten" || a.Buttons[0].URL != "wanderwelt://beitreten" ||
 		a.Buttons[1].Label != "wanderwelt herunterladen" || a.Buttons[1].URL != "https://github.com/Bazinga0o0/wanderwelt/releases/latest" {
 		t.Errorf("Aktivität: %s", acts[0])
 	}
 	if a.Party != nil || a.Secrets != nil {
 		t.Errorf("Party/Geheimnis ohne Gruppe: %s", acts[0])
+	}
+}
+
+func TestOhneBeitretenKnopf(t *testing.T) {
+	b, err := activityPayload(&Activity{State: "x", NoJoin: true}, 1, "n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m struct {
+		Args struct {
+			Activity struct {
+				Buttons []struct{ Label, URL string } `json:"buttons"`
+			} `json:"activity"`
+		} `json:"args"`
+	}
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatal(err)
+	}
+	if bs := m.Args.Activity.Buttons; len(bs) != 1 || bs[0].Label != ButtonText || bs[0].URL != ButtonURL {
+		t.Errorf("Knöpfe ohne Beitreten: %s", b)
 	}
 }
 

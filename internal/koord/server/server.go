@@ -248,6 +248,7 @@ func New(cfg *config.Config, lm *lease.Manager, st *store.Store, ph portholder.C
 	s.mux.HandleFunc("POST /v1/speedtest", s.handleSpeedTest)
 	s.mux.HandleFunc("POST /v1/join", s.handleJoin)
 	s.mux.HandleFunc("GET /v1/join", s.handleJoinStatus)
+	s.mux.HandleFunc("GET /v1/info", s.handleInfo)
 	s.mux.HandleFunc("GET /v1/join-requests", s.handleJoinRequests)
 	s.mux.HandleFunc("POST /v1/join-requests/{email}/accept", s.handleJoinAccept)
 	s.mux.HandleFunc("POST /v1/join-requests/{email}/decline", s.handleJoinDecline)
@@ -331,6 +332,9 @@ const notMemberMsg = "dieses Konto gehört nicht zur Gruppe"
 // guestAllowed: Endpunkte, die auch Nicht-Mitglieder benutzen dürfen
 // (nur diese, genau dieser Pfad).
 func guestAllowed(r *http.Request) bool {
+	if r.URL.Path == "/v1/info" {
+		return r.Method == http.MethodGet
+	}
 	return r.URL.Path == "/v1/join" && (r.Method == http.MethodGet || r.Method == http.MethodPost)
 }
 
@@ -483,6 +487,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		Maintenance:       s.wartungNotice(),
 	}
 	st.Members = len(s.memberList())
+	st.NoDiscordJoin = s.cfg.NoDiscordJoin
 	if info, ok := s.lm.Info(); ok {
 		st.Host = publicHost(info.Host)
 		// Ein Zuschlag nur zum Hochladen hat keinen Server: nie bereit.

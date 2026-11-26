@@ -33,6 +33,9 @@ func (q *aktionsQuelle) Speicherstaende(context.Context) ([]fensterapi.Speichers
 func (q *aktionsQuelle) Log(context.Context, int) (string, error)                 { return "", nil }
 func (q *aktionsQuelle) Mitglieder(context.Context) ([]api.MemberInfo, error)     { return nil, nil }
 func (q *aktionsQuelle) Beitritte(context.Context) ([]api.JoinRequestInfo, error) { return nil, nil }
+func (q *aktionsQuelle) Entdecken(context.Context, bool) (*fensterapi.Entdecken, error) {
+	return nil, nil
+}
 func (q *aktionsQuelle) Aktion(_ context.Context, name string, body any) error {
 	b, _ := json.Marshal(body)
 	q.mu.Lock()
@@ -82,8 +85,8 @@ func TestBedienung(t *testing.T) {
 	}
 
 	bild()
-	// Reihenfolge: Start, Welt, Hosten, Mitglieder, Log, dann „Spielen“.
-	vor(6)
+	// Reihenfolge: Start, Welt, Hosten, Entdecken, Mitglieder, Log, dann „Spielen“.
+	vor(7)
 	r.ClickFocus()
 	bild()
 	if got := warteAktionen(1); len(got) != 1 || got[0] != "play null" {
@@ -227,8 +230,8 @@ func TestGespeichertBleibt(t *testing.T) {
 	alt := z.Profil
 	b := neuerBedienTest(t, schnappschuss{verb: verbunden, runde: 1, z: z, mitglieder: beispielMitglieder()}, reiterHosten)
 	b.bild()
-	// Schalter Dauerbetrieb per Tastatur: fünf Reiter, C2ME, Dauerbetrieb.
-	for range 7 {
+	// Schalter Dauerbetrieb per Tastatur: sechs Reiter, C2ME, Dauerbetrieb.
+	for range 8 {
 		b.r.MoveFocus(key.FocusForward)
 	}
 	if !b.r.Source().Focused(&b.u.hosten.dauer) {
@@ -276,7 +279,7 @@ func TestGespeichertBleibt(t *testing.T) {
 	b.u.reiter = reiterMitglieder
 	b.r = input.Router{}
 	b.bild()
-	for range 7 { // fünf Reiter, „ändern“ von Jonas, dann sein Admin-Schalter
+	for range 8 { // sechs Reiter, „ändern“ von Jonas, dann sein Admin-Schalter
 		b.r.MoveFocus(key.FocusForward)
 	}
 	b.r.ClickFocus()
@@ -383,8 +386,8 @@ func TestBeitrittsanfragenBedienung(t *testing.T) {
 	b := neuerBedienTest(t, s, reiterMitglieder)
 	b.bild()
 
-	// Fokus: fünf Reiter, dann „Annehmen“ der ersten Anfrage.
-	for range 6 {
+	// Fokus: sechs Reiter, dann „Annehmen“ der ersten Anfrage.
+	for range 7 {
 		b.r.MoveFocus(key.FocusForward)
 	}
 	b.r.ClickFocus()
@@ -421,5 +424,89 @@ func TestBeitrittsanfragenBedienung(t *testing.T) {
 	got = b.warte(2)
 	if len(got) != 2 || got[1] != `beitritt {"email":"tim@example.de","annehmen":false}` {
 		t.Fatalf("Aktionen: %q", got)
+	}
+}
+
+// Entdecken: „Beitritt anfragen“ öffnet das Namensformular; ein ungültiger
+// Name schickt nichts, ein gültiger die Aktion mit Adresse und Name; danach
+// steht die Gruppe als „angefragt“ da, bis die Liste es selbst zeigt.
+func TestEntdeckenBedienung(t *testing.T) {
+	jetzt := time.Date(2026, 11, 23, 15, 30, 0, 0, time.Local)
+	z := beispielZustand(jetzt, false, true)
+	e := &fensterapi.Entdecken{MinecraftName: "Steve_1", Gruppen: []fensterapi.EntdeckenEintrag{
+		{URL: "https://a.example.org", Titel: "Eigene", Zustand: fensterapi.EntdeckenMitglied, Lokal: true},
+		{URL: "https://b.example.org", Titel: "Fremde", Zustand: fensterapi.EntdeckenKeiner},
+	}}
+	b := neuerBedienTest(t, schnappschuss{verb: verbunden, runde: 1, z: z, entdecken: e, entdeckenAb: jetzt}, reiterEntdecken)
+	b.bild()
+	// Für Mitglieder gibt es keinen Knopf.
+	b.u.entd.klick("https://a.example.org").Click()
+	b.bild()
+	if b.u.entd.nameFuer != "" {
+		t.Fatal("Formular für eine eigene Gruppe")
+	}
+	b.u.entd.klick("https://b.example.org").Click()
+	b.bild()
+	if b.u.entd.nameFuer != "https://b.example.org" || b.u.entd.nameEd.Text() != "Steve_1" {
+		t.Fatalf("Formular: %q %q", b.u.entd.nameFuer, b.u.entd.nameEd.Text())
+	}
+	b.u.entd.nameEd.SetText("x")
+	b.u.entd.nameOK.Click()
+	b.bild()
+	if b.u.entd.nameFehler == "" || len(b.q.liste()) != 0 {
+		t.Fatalf("ungültiger Name: %q %q", b.u.entd.nameFehler, b.q.liste())
+	}
+	b.u.entd.nameEd.SetText("Steve_2")
+	b.u.entd.nameOK.Click()
+	b.bild()
+	if got := b.warte(1); len(got) != 1 || got[0] != `entdeckenbeitritt {"url":"https://b.example.org","name":"Steve_2"}` {
+		t.Fatalf("Aktion: %q", got)
+	}
+	b.bild()
+	if b.u.entd.nameFuer != "" || !b.u.entd.gestellt["https://b.example.org"] {
+		t.Errorf("danach: %q %v", b.u.entd.nameFuer, b.u.entd.gestellt)
+	}
+	// Abbrechen schließt das Formular ohne Aktion.
+	e.Gruppen[1].Zustand = fensterapi.EntdeckenKeiner
+	delete(b.u.entd.gestellt, "https://b.example.org")
+	b.u.entd.klick("https://b.example.org").Click()
+	b.bild()
+	b.u.entd.nameAbbr.Click()
+	b.bild()
+	if b.u.entd.nameFuer != "" || len(b.q.liste()) != 1 {
+		t.Errorf("Abbrechen: %q %q", b.u.entd.nameFuer, b.q.liste())
+	}
+}
+
+// wanderwelt://beitreten bei mehreren Gruppen: Das Fenster springt einmal zum
+// Reiter Entdecken, danach wählt der Nutzer selbst.
+func TestSprungZuEntdecken(t *testing.T) {
+	jetzt := time.Date(2026, 11, 23, 15, 30, 0, 0, time.Local)
+	z := beispielZustand(jetzt, false, true)
+	z.ZeigeEntdecken = true
+	b := neuerBedienTest(t, schnappschuss{verb: verbunden, runde: 1, z: z}, reiterStart)
+	b.bild()
+	if b.u.reiter != reiterEntdecken {
+		t.Fatalf("Reiter: %v", b.u.reiter)
+	}
+	b.u.reiter = reiterLog
+	b.bild()
+	if b.u.reiter != reiterLog {
+		t.Fatal("springt bei jedem Bild")
+	}
+	z2 := *z
+	z2.ZeigeEntdecken = false
+	b.u.d.mu.Lock()
+	b.u.d.s.z = &z2
+	b.u.d.mu.Unlock()
+	b.bild()
+	z3 := z2
+	z3.ZeigeEntdecken = true
+	b.u.d.mu.Lock()
+	b.u.d.s.z = &z3
+	b.u.d.mu.Unlock()
+	b.bild()
+	if b.u.reiter != reiterEntdecken {
+		t.Fatal("zweiter Link springt nicht")
 	}
 }

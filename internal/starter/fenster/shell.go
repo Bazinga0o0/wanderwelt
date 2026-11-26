@@ -40,7 +40,7 @@ const (
 	inhaltBreite = 860
 )
 
-var reiterNamen = [anzahlReiter]string{"Start", "Welt", "Hosten", "Mitglieder", "Log"}
+var reiterNamen = [anzahlReiter]string{"Start", "Welt", "Hosten", "Entdecken", "Mitglieder", "Log"}
 
 type sichtbarerHinweis struct {
 	art  string // "info" | "fehler"
@@ -80,6 +80,11 @@ type oberflaeche struct {
 	hosten hostenAnsicht
 	mitgl  mitgliederAnsicht
 	log    logAnsicht
+
+	gruppen gruppenAuswahl
+	entd    entdeckenAnsicht
+
+	zeigeEntdeckenGesehen bool
 }
 
 func neueOberflaeche(th *thema, d *daten) *oberflaeche {
@@ -88,6 +93,7 @@ func neueOberflaeche(th *thema, d *daten) *oberflaeche {
 	u.welt.liste.Axis = layout.Vertical
 	u.hosten.liste.Axis = layout.Vertical
 	u.mitgl.liste.Axis = layout.Vertical
+	u.entd.liste.Axis = layout.Vertical
 	u.log.liste.Axis = layout.Vertical
 	u.log.liste.ScrollToEnd = true
 	return u
@@ -111,6 +117,14 @@ func (u *oberflaeche) layout(gtx layout.Context) layout.Dimensions {
 	u.hinweiseNachziehen(gtx.Now, s)
 
 	z := s.z
+	if z != nil {
+		// wanderwelt://beitreten bei mehreren Gruppen: zum Reiter Entdecken springen
+		// (einmal je Meldung der Instanz, danach wählt der Nutzer selbst).
+		if z.ZeigeEntdecken && !u.zeigeEntdeckenGesehen {
+			u.reiter = reiterEntdecken
+		}
+		u.zeigeEntdeckenGesehen = z.ZeigeEntdecken
+	}
 	admin := z != nil && z.Me != nil && z.Me.Admin
 	if u.reiter == reiterMitglieder && !admin {
 		u.reiter = reiterStart
@@ -202,6 +216,7 @@ func (u *oberflaeche) kopf(gtx layout.Context, s schnappschuss, admin bool) layo
 				)
 			})
 		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions { return u.gruppen.layout(gtx, u, s) }),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			if s.verb != verbunden || s.z == nil {
 				return layout.Dimensions{Size: image.Pt(0, gtx.Dp(10))}
@@ -334,6 +349,8 @@ func (u *oberflaeche) inhalt(gtx layout.Context, s schnappschuss, admin bool) la
 		return u.welt.layout(gtx, u, s, admin)
 	case reiterHosten:
 		return u.hosten.layout(gtx, u, s)
+	case reiterEntdecken:
+		return u.entd.layout(gtx, u, s)
 	case reiterMitglieder:
 		return u.mitgl.layout(gtx, u, s)
 	case reiterLog:

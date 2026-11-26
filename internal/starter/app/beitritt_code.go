@@ -41,6 +41,8 @@ const (
 	// joinLinkGap: Mindestabstand, in dem ein Link das Fenster öffnet (jede
 	// Webseite kann wanderwelt:// auslösen).
 	joinLinkGap = 5 * time.Second
+	// zeigeEntdeckenDauer: So lange meldet der Zustand „Reiter Entdecken zeigen“.
+	zeigeEntdeckenDauer = 15 * time.Second
 )
 
 // IsJoinLinkArg: Ist das Kommandozeilenargument ein wanderwelt://-Link? Was
@@ -56,6 +58,17 @@ var (
 	// askGroupCode fragt den Gruppencode. Fehler: zenity.ErrExtraButton
 	// („Gruppendatei wählen“), zenity.ErrCanceled (Abbruch).
 	askGroupCode = func(hint string) (string, error) {
+		if hint == "" {
+			// Erst die Wahl: Gruppencode, Entdecken oder Gruppendatei.
+			switch c, ok := setupMenu(); {
+			case !ok:
+				return "", zenity.ErrCanceled
+			case c == menuEntdecken:
+				return "", errEntdeckenWahl
+			case c == menuDatei:
+				return "", zenity.ErrExtraButton
+			}
+		}
 		text := "Willkommen bei wanderwelt!\n\nFüge den Gruppencode ein, den du von einem Mitspieler oder dem Admin bekommen hast."
 		if hint != "" {
 			text = hint + "\n\n" + text
@@ -100,6 +113,13 @@ func (a *App) groupCodeOffer() (*group.Invite, error) {
 	for {
 		code, err := askGroupCode(hint)
 		switch {
+		case errors.Is(err, errEntdeckenWahl):
+			inv, token, err := a.entdeckenSetup(a.ctx)
+			if err != nil {
+				return nil, err
+			}
+			a.presetToken = token
+			return inv, nil
 		case errors.Is(err, zenity.ErrExtraButton):
 			return nil, nil
 		case errors.Is(err, zenity.ErrCanceled):
@@ -143,7 +163,15 @@ func (a *App) onJoinLink() {
 	case tooSoon:
 		log.Printf("Beitritts-Link: zu schnell wiederholt, ignoriert")
 	default:
-		log.Printf("Beitritts-Link: öffne das Fenster")
+		if len(group.List()) > 1 {
+			// Mehrere Gruppen: Das Fenster springt zum Reiter „Entdecken“.
+			log.Printf("Beitritts-Link: öffne das Fenster (Reiter Entdecken)")
+			a.mu.Lock()
+			a.zeigeEntdeckenBis = time.Now().Add(zeigeEntdeckenDauer)
+			a.mu.Unlock()
+		} else {
+			log.Printf("Beitritts-Link: öffne das Fenster")
+		}
 		go openWindowOnJoin()
 	}
 }
