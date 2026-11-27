@@ -40,7 +40,7 @@ const (
 	inhaltBreite = 860
 )
 
-var reiterNamen = [anzahlReiter]string{"Start", "Welt", "Hosten", "Entdecken", "Mitglieder", "Log", "Statistik", "Zustand"}
+var reiterNamen = [anzahlReiter]string{"Start", "Welt", "Hosten", "Entdecken", "Mitglieder", "Log", "Statistik", "Zustand", "Server"}
 
 type sichtbarerHinweis struct {
 	art  string // "info" | "fehler"
@@ -82,6 +82,7 @@ type oberflaeche struct {
 	log    logAnsicht
 	stat   statistikAnsicht
 	zust   zustandAnsicht
+	srv    serverAnsicht
 
 	gruppen gruppenAuswahl
 	entd    entdeckenAnsicht
@@ -371,6 +372,8 @@ func (u *oberflaeche) inhalt(gtx layout.Context, s schnappschuss, admin bool) la
 		return u.stat.layout(gtx, u, s)
 	case reiterZustand:
 		return u.zust.layout(gtx, u, s)
+	case reiterServer:
+		return u.srv.layout(gtx, u, s)
 	}
 	return u.start.layout(gtx, u, s)
 }

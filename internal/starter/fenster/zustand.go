@@ -379,4 +379,6 @@ func (v *zustandAnsicht) karte(gtx layout.Context, t *thema, k zustandKarte) lay
 }
 
 // nurAdmin: Reiter, die es nur für Admins gibt.
-func nurAdmin(r reiter) bool { return r == reiterMitglieder || r == reiterZustand }
+func nurAdmin(r reiter) bool {
+	return r == reiterMitglieder || r == reiterZustand || r == reiterServer
+}

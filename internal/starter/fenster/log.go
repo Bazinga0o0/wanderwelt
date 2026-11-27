@@ -8,14 +8,25 @@ import (
 	"gioui.org/widget"
 )
 
-// Reiter „Log“: die letzten Zeilen von wanderwelt.log, folgt unten.
+// Reiter „Log“: die letzten Zeilen von wanderwelt.log, folgt unten. Der Knopf
+// „Fehlerbericht erstellen“ packt ein Zip nach Downloads (die Instanz
+// erledigt es, lokal, ohne Upload) und öffnet den Ordner; den Pfad nennt der
+// Hinweis der Instanz, der im Fenster erscheint.
+
+// berichtFertigText steht nach dem Erstellen in der Kopfzeile des Reiters.
+const berichtFertigText = "Fehlerbericht liegt in Downloads (nur auf diesem PC, Geheimnisse entfernt) – der Ordner ist geöffnet."
 
 type logAnsicht struct {
-	liste  widget.List // ScrollToEnd: bleibt unten, solange man nicht hochscrollt
-	ordner widget.Clickable
-	text   string
-	zeilen []string
-	fehler string
+	liste   widget.List // ScrollToEnd: bleibt unten, solange man nicht hochscrollt
+	ordner  widget.Clickable
+	bericht widget.Clickable
+	// berichtLaeuft: Der Fehlerbericht wird gerade erstellt; berichtOK: er ist
+	// fertig (der Pfad steht im Hinweis der Instanz).
+	berichtLaeuft bool
+	berichtOK     bool
+	text          string
+	zeilen        []string
+	fehler        string
 }
 
 // zeilenVon teilt den Log-Text und behält höchstens die letzten n Zeilen.
@@ -45,6 +56,17 @@ func (v *logAnsicht) layout(gtx layout.Context, u *oberflaeche, s schnappschuss)
 			}
 		})
 	}
+	if v.bericht.Clicked(gtx) && !v.berichtLaeuft {
+		v.fehler, v.berichtLaeuft, v.berichtOK = "", true, false
+		u.d.aktion("fehlerbericht", nil, func(err error) {
+			v.berichtLaeuft = false
+			if err != nil {
+				v.fehler = err.Error()
+				return
+			}
+			v.berichtOK = true
+		})
+	}
 	return spalteVoll(gtx, func(gtx layout.Context) layout.Dimensions {
 		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -60,8 +82,20 @@ func (v *logAnsicht) layout(gtx layout.Context, u *oberflaeche, s schnappschuss)
 								return t.farbig(v.fehler, t.f.fehler)(gtx)
 							case s.logErr != "":
 								return t.farbig(s.logErr, t.f.fehler)(gtx)
+							case v.berichtLaeuft:
+								return t.leise("Der Fehlerbericht wird erstellt …")(gtx)
+							case v.berichtOK:
+								return t.leise(berichtFertigText)(gtx)
 							}
 							return t.leise(txt)(gtx)
+						}),
+						layout.Rigid(layout.Spacer{Width: 12}.Layout),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							txt := "Fehlerbericht erstellen"
+							if v.berichtLaeuft {
+								txt = "Erstelle …"
+							}
+							return t.knopf(gtx, &v.bericht, txt, knopfNeben, !v.berichtLaeuft)
 						}),
 						layout.Rigid(layout.Spacer{Width: 12}.Layout),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {

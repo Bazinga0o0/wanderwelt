@@ -2,6 +2,11 @@
 
 package winsys
 
+import (
+	"fmt"
+	"runtime"
+)
+
 // SingleInstance: außerhalb von Windows ohne Sperre (nur Entwicklung).
 func SingleInstance(name string) (release func(), ok bool, err error) {
 	return func() {}, true, nil
@@ -48,6 +53,14 @@ func FreeSpace(path string) (int64, error) { return 0, ErrUnsupported }
 
 // DocumentsDir gibt es nur unter Windows.
 func DocumentsDir() (string, error) { return "", ErrUnsupported }
+
+// DownloadsDir gibt es nur unter Windows.
+func DownloadsDir() (string, error) { return "", ErrUnsupported }
+
+// SystemInfo beschreibt außerhalb von Windows nur Betriebssystem und Kerne.
+func SystemInfo() string {
+	return fmt.Sprintf("System: %s/%s, %d logische Kerne\n", runtime.GOOS, runtime.GOARCH, runtime.NumCPU())
+}
 
 // CreateShortcut gibt es nur unter Windows.
 func CreateShortcut(lnk, target, args, workDir, description string) error { return ErrUnsupported }

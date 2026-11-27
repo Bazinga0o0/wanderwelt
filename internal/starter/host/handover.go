@@ -373,6 +373,7 @@ func (s *Session) freezeOp(parent context.Context) (map[string]string, error) {
 	ctx, cancel := context.WithTimeout(parent, handoverFreezeTimeout)
 	defer cancel()
 	modes := map[string]string{}
+	s.weltLogs() // vor save-off: nichts schreibt mehr, solange die Welt für den Stand steht
 	if err := s.runCmd(ctx, "tick freeze"); err != nil {
 		return modes, err
 	}

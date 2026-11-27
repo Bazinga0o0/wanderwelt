@@ -47,6 +47,13 @@ const (
 	speedTestSize    = 8 << 20
 	speedTestTimeout = 60 * time.Second
 
+	// PingProbes: Zahl der gezählten Round-Trips einer Latenzmessung (Ping);
+	// der Median davon ist der Wert. pingProbeTimeout begrenzt einen
+	// einzelnen Round-Trip, pingTimeout die ganze Messung.
+	PingProbes       = 7
+	pingProbeTimeout = 3 * time.Second
+	pingTimeout      = 15 * time.Second
+
 	maxErrorBody = 64 << 10
 	maxErrorText = 300
 )
@@ -311,6 +318,70 @@ func (c *Client) HostSettings(ctx context.Context) (*api.HostSettings, error) {
 	var out api.HostSettings
 	if err := c.call(ctx, callTimeout, http.MethodGet, "/v1/host/settings", nil, &out); err != nil {
 		return nil, err
+	}
+	return &out, nil
+}
+
+// HostJobs holt Aufträge aus dem Reiter „Server“ (POST /v1/host/jobs). Der
+// Koordinator hält die Anfrage bis etwa 20 s offen, wenn nichts ansteht.
+// 409: ErrLeaseLost; ein älterer Koordinator: ErrNotSupported.
+func (c *Client) HostJobs(ctx context.Context, leaseID int64, machineID string) ([]api.HostJob, error) {
+	var out api.HostJobs
+	err := c.call(ctx, callTimeout, http.MethodPost, "/v1/host/jobs", api.HostJobsRequest{LeaseID: leaseID, MachineID: machineID}, &out)
+	if err != nil {
+		return nil, leaseErr(notSupported(err, false))
+	}
+	return out.Jobs, nil
+}
+
+// HostJobResult meldet das Ergebnis eines Auftrags (POST /v1/host/jobs/result).
+func (c *Client) HostJobResult(ctx context.Context, res api.HostJobResult) error {
+	return c.call(ctx, callTimeout, http.MethodPost, "/v1/host/jobs/result", res, nil)
+}
+
+// ServerLists holt Whitelist, Ops und Banns (GET /v1/server/lists; nur Admins).
+func (c *Client) ServerLists(ctx context.Context) (*api.ServerLists, error) {
+	var out api.ServerLists
+	if err := c.call(ctx, callTimeout, http.MethodGet, "/v1/server/lists", nil, &out); err != nil {
+		return nil, notSupported(err, false)
+	}
+	return &out, nil
+}
+
+// ChangeServerList ändert Whitelist, Ops oder Banns (POST /v1/server/lists).
+func (c *Client) ChangeServerList(ctx context.Context, ch api.ServerListChange) (*api.ServerListResult, error) {
+	var out api.ServerListResult
+	if err := c.call(ctx, callTimeout, http.MethodPost, "/v1/server/lists", ch, &out); err != nil {
+		return nil, notSupported(err, false)
+	}
+	return &out, nil
+}
+
+// Gamerules holt die Spielregeln der laufenden Welt (GET /v1/server/gamerules).
+func (c *Client) Gamerules(ctx context.Context) (*api.Gamerules, error) {
+	var out api.Gamerules
+	if err := c.call(ctx, callTimeout, http.MethodGet, "/v1/server/gamerules", nil, &out); err != nil {
+		return nil, notSupported(err, false)
+	}
+	return &out, nil
+}
+
+// SetGamerule setzt eine Spielregel der laufenden Welt
+// (POST /v1/server/gamerules).
+func (c *Client) SetGamerule(ctx context.Context, req api.GameruleSet) (*api.ServerCommandResult, error) {
+	var out api.ServerCommandResult
+	if err := c.call(ctx, callTimeout, http.MethodPost, "/v1/server/gamerules", req, &out); err != nil {
+		return nil, notSupported(err, false)
+	}
+	return &out, nil
+}
+
+// ServerCommand schickt einen Befehl an den laufenden Server
+// (POST /v1/server/command).
+func (c *Client) ServerCommand(ctx context.Context, cmd string) (*api.ServerCommandResult, error) {
+	var out api.ServerCommandResult
+	if err := c.call(ctx, callTimeout, http.MethodPost, "/v1/server/command", api.ServerCommand{Command: cmd}, &out); err != nil {
+		return nil, notSupported(err, false)
 	}
 	return &out, nil
 }
@@ -637,6 +708,87 @@ func (c *Client) SpeedTest(ctx context.Context) (mbps float64, err error) {
 		return 0, errors.New("Koordinator: Geschwindigkeitsmessung ohne messbare Dauer")
 	}
 	return float64(len(data)*8) / elapsed / 1e6, nil
+}
+
+// PingResult ist das Ergebnis von Ping.
+type PingResult struct {
+	// Median der gezählten Round-Trips.
+	Median time.Duration
+	// Estimated: der Koordinator kennt GET /v1/ping nicht (404, älter als
+	// dieser Starter); der Wert stammt dann von GET /v1/me und ist nur
+	// geschätzt. Der Starter schickt ihn nicht (ein älterer Koordinator
+	// lehnt das Feld ab), er dient nur dem Log.
+	Estimated bool
+}
+
+// Ping misst die Latenz zum Koordinator (also durch tunneld, wie alle
+// Anfragen): ein ungezählter Probe-Aufruf baut die Verbindung samt TLS auf,
+// danach PingProbes Round-Trips über dieselbe Verbindung (Keep-Alive); der
+// Median zählt. Gemessen wird die Zeit bis zu den Antwort-Köpfen von
+// GET /v1/ping (leer, ohne Daten). Antwortet der Koordinator darauf mit 404,
+// ist er älter: Dann dient GET /v1/me als leichter Ersatz, und das Ergebnis
+// ist Estimated. Einzelne gescheiterte Round-Trips fehlen im Median (mindestens
+// die Hälfte muss gelingen), sonst ist es ein Fehler.
+func (c *Client) Ping(ctx context.Context) (PingResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, pingTimeout)
+	defer cancel()
+	path, estimated := "/v1/ping", false
+	if _, err := c.pingOnce(ctx, path); err != nil {
+		if se, ok := errors.AsType[*StatusError](err); !ok || se.StatusCode != http.StatusNotFound {
+			return PingResult{}, err
+		}
+		path, estimated = "/v1/me", true
+		if _, err := c.pingOnce(ctx, path); err != nil {
+			return PingResult{}, err
+		}
+	}
+	var ds []time.Duration
+	for range PingProbes {
+		d, err := c.pingOnce(ctx, path)
+		if err != nil {
+			if ctx.Err() != nil {
+				return PingResult{}, err
+			}
+			continue
+		}
+		ds = append(ds, d)
+	}
+	if len(ds)*2 < PingProbes {
+		return PingResult{}, fmt.Errorf("Ping: nur %d von %d Round-Trips gelangen", len(ds), PingProbes)
+	}
+	return PingResult{Median: Median(ds), Estimated: estimated}, nil
+}
+
+// pingOnce: ein GET auf path, Zeit von der Anfrage bis zu den Antwort-Köpfen.
+func (c *Client) pingOnce(ctx context.Context, path string) (time.Duration, error) {
+	ctx, cancel := context.WithTimeout(ctx, pingProbeTimeout)
+	defer cancel()
+	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return 0, err
+	}
+	start := time.Now()
+	resp, err := c.send(req)
+	d := time.Since(start)
+	if err != nil {
+		return 0, err
+	}
+	drainClose(resp)
+	return d, nil
+}
+
+// Median liefert den Median von ds (bei gerader Zahl den Mittelwert der
+// beiden mittleren Werte), 0 bei leerer Liste. ds bleibt unverändert.
+func Median(ds []time.Duration) time.Duration {
+	if len(ds) == 0 {
+		return 0
+	}
+	s := slices.Clone(ds)
+	slices.Sort(s)
+	if n := len(s); n%2 == 0 {
+		return (s[n/2-1] + s[n/2]) / 2
+	}
+	return s[len(s)/2]
 }
 
 type countingReader struct {

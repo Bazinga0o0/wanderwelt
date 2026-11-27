@@ -32,7 +32,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -64,9 +63,6 @@ const (
 	// updateWait: So lange wartet eine neue Version darauf, dass die
 	// laufende Instanz das Hosten beendet und die Sperre freigibt.
 	updateWait = 15 * time.Minute
-	// replaceWait: So lange wird versucht, die installierte Kopie zu
-	// ersetzen (die alte Instanz kann gerade noch enden).
-	replaceWait = 30 * time.Second
 	// recoverRetry: So oft wird ein vorgemerkter Stand erneut nachgereicht.
 	recoverRetry = 2 * time.Minute
 	// recoverWait: So lange wartet „Spielen“ auf ein laufendes Nachreichen.
@@ -217,6 +213,7 @@ type App struct {
 	titel        map[string]string // Titel der Gruppen nach Kennung (nur lokal; unter mu)
 	joinMu       sync.Mutex        // serialisiert beitrittsHinweis
 	notfall      notfallState      // Notfallkopie (notfallkopie.go)
+	benach       benachState       // Schalter der Windows-Hinweise (benachrichtigung.go)
 
 	// presence: Discord-Anzeige (anzeige.go); nil: aus (Tests).
 	presence discord.Presence
@@ -271,6 +268,11 @@ func Run(opts Options) int {
 	}
 	log.Printf("wanderwelt %s startet (Home %s, PID %d)", opts.Version, group.Home(), os.Getpid())
 
+	// Als Erstes (unter der Sperre, also nie neben einem laufenden Tausch):
+	// fehlt die installierte Kopie nach einem abgebrochenen Tausch, wieder
+	// herstellen (tausch.go).
+	healInstall()
+
 	// Nicht aus Home() gestartet: dorthin kopieren und die Kopie übernehmen
 	// lassen.
 	if handed, err := handOffToInstalled(opts, release); err != nil {
@@ -280,7 +282,6 @@ func Run(opts Options) int {
 	} else if handed {
 		return 0
 	}
-	removeOldCopies()
 	migrateLayout()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -363,6 +364,11 @@ func Run(opts Options) int {
 	a.hc = hc
 	a.mu.Unlock()
 	a.recoverAtStart()
+	// Die installierte Kopie ist nachweislich gestartet: die Rückfallkopie
+	// des Tauschs (wanderwelt.exe.alt) wird nicht mehr gebraucht.
+	if self, err := os.Executable(); err == nil {
+		confirmInstall(self)
+	}
 
 	if err := winsys.OnShutdown(winsys.ShutdownHooks{
 		Hosting: a.shutdownHosting,
@@ -505,12 +511,18 @@ func handOffToInstalled(opts Options, release func()) (handed bool, err error) {
 	if samePath(self, target) {
 		return false, nil
 	}
-	updated := false
+	updated, skipCopy := false, false
 	if _, statErr := os.Stat(target); statErr == nil {
 		same, err := sameContent(self, target)
 		updated = err == nil && !same
+		// Dieselben Bytes (etwa nach der Heilung aus update\): kein Tausch nötig.
+		skipCopy = err == nil && same
 	}
-	if err := copySelf(self, target); err != nil {
+	copyErr := error(nil)
+	if !skipCopy {
+		copyErr = copySelf(self, target)
+	}
+	if err := copyErr; err != nil {
 		if _, statErr := os.Stat(target); statErr != nil {
 			return false, err
 		}
@@ -549,71 +561,6 @@ func samePath(a, b string) bool {
 		return os.SameFile(ia, ib)
 	}
 	return strings.EqualFold(filepath.Clean(a), filepath.Clean(b))
-}
-
-func copySelf(src, dst string) error {
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		return err
-	}
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	tmp, err := os.CreateTemp(filepath.Dir(dst), ExeName+".*.tmp")
-	if err != nil {
-		return err
-	}
-	_, err = io.Copy(tmp, in)
-	if cerr := tmp.Close(); err == nil {
-		err = cerr
-	}
-	if err != nil {
-		os.Remove(tmp.Name())
-		return err
-	}
-	// Ersetzen ist atomar (Rename). Die alte Kopie kann noch laufen (ein
-	// offenes Fenster, eine gerade endende Instanz) oder von einem
-	// Virenscanner offen sein. Eine laufende exe lässt sich unter Windows
-	// nicht ersetzen, wohl aber umbenennen: dann beiseiteschieben
-	// (wanderwelt.exe.alt-…, removeOldCopies räumt sie beim nächsten Start
-	// weg). Wiederholen, höchstens replaceWait lang.
-	deadline := time.Now().Add(replaceWait)
-	for i := 1; ; i++ {
-		if err = os.Rename(tmp.Name(), dst); err == nil {
-			return nil
-		}
-		aside := dst + oldCopyMark + strconv.FormatInt(time.Now().UnixNano(), 36)
-		if os.Rename(dst, aside) == nil {
-			if err = os.Rename(tmp.Name(), dst); err == nil {
-				log.Printf("%s lief noch; die alte Kopie liegt jetzt unter %s", dst, filepath.Base(aside))
-				return nil
-			}
-			os.Rename(aside, dst) // wenigstens die alte Kopie behalten
-		}
-		if time.Now().After(deadline) {
-			break
-		}
-		time.Sleep(min(time.Duration(i)*50*time.Millisecond, 500*time.Millisecond))
-	}
-	os.Remove(tmp.Name())
-	return err
-}
-
-// oldCopyMark: Endung der beiseitegeschobenen alten Kopien
-// (wanderwelt.exe.alt-<Zeit>).
-const oldCopyMark = ".alt-"
-
-// removeOldCopies löscht beiseitegeschobene alte Kopien in Home(). Läuft
-// eine noch (ein Fenster der alten Version), bleibt sie bis zum nächsten
-// Start liegen.
-func removeOldCopies() {
-	olds, _ := filepath.Glob(filepath.Join(group.Home(), ExeName+oldCopyMark+"*"))
-	for _, f := range olds {
-		if err := os.Remove(f); err == nil {
-			log.Printf("alte Kopie %s gelöscht", filepath.Base(f))
-		}
-	}
 }
 
 // installed: Gruppendatei, PC-Kennung und abgeschlossene Installation.

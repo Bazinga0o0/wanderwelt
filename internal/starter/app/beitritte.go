@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/Bazinga0o0/wanderwelt/internal/api"
+	"github.com/Bazinga0o0/wanderwelt/internal/ereignis"
 	"github.com/Bazinga0o0/wanderwelt/internal/starter/client"
 )
 
@@ -44,6 +45,9 @@ func (a *App) beitrittsHinweis(ctx context.Context, c *client.Client, me *api.Me
 	}
 	a.joinGemeldet = jetzt
 	a.mu.Unlock()
+	if !a.benachAn(ereignis.Beitrittsanfrage) {
+		return // vom Mitglied abgeschaltet; die Anfragen gelten als gemeldet
+	}
 	switch {
 	case len(neu) == 0:
 	case len(neu) > maxEinzelHinweise:

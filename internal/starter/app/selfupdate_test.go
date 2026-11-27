@@ -562,7 +562,9 @@ func TestNoUpdateLoop(t *testing.T) {
 		t.Fatalf("erste Übergabe: %v, %d Downloads", p.startedExes(), k.downloads.Load())
 	}
 
-	// Die neue Instanz (gleiches Home) meldet 0.5.0.
+	// Die neue Instanz hat sich installiert (wanderwelt.exe in Home()) und
+	// meldet 0.5.0.
+	writeInstalled(t, []byte("MZ installierte Kopie 0.5.0"))
 	newer := suApp(t, k.c, "0.5.0")
 	p.handOver(newer)
 	runSelfUpdate(t, newer)

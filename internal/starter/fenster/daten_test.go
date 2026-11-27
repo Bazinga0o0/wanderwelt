@@ -195,9 +195,10 @@ func TestDatenPolling(t *testing.T) {
 
 	// Log nur auf dem Reiter Log (300 Zeilen), Mitglieder nur auf ihrem.
 	d.setzeReiter(reiterLog)
-	warteAuf(t, time.Second, "Log geholt", func() bool { return a.anzahl("/v1/log") >= 1 })
+	// Auf den Schnappschuss warten, nicht nur auf die Anfrage (sonst ein Wettlauf).
+	warteAuf(t, time.Second, "Log geholt", func() bool { return a.anzahl("/v1/log") >= 1 && d.lesen().log != "" })
 	if s := d.lesen(); !strings.Contains(s.log, "Tray bereit") {
-		t.Errorf("Log nicht im Schnappschuss: %q", s.log)
+		t.Errorf("Log nicht im Schnappschuss: %q (Fehler %q)", s.log, s.logErr)
 	}
 	if c := a.anzahl("/v1/mitglieder"); c != 0 {
 		t.Errorf("Mitglieder auf Reiter Log %d-mal geholt", c)

@@ -22,14 +22,15 @@
 //	GET  /v1/welten          → api.WorldList (JSON; jedes Mitglied)
 //	GET  /v1/entdecken[?neu=1] → Entdecken (JSON): gelistete Gruppen der tunnel-Server
 //	POST /v1/{gruppe|entdeckenbeitritt} = {"id": …} bzw. {"url": …, "name": …}
-//	POST /v1/{play|beenden|beendenohne|import|profil|autostart|zurueckholen|speicher|rolle|mcname|beitritt|logordner}
+//	POST /v1/{play|beenden|beendenohne|import|profil|autostart|zurueckholen|speicher|rolle|mcname|beitritt|logordner|benachrichtigung}
 //	POST /v1/{welt|weltneu|weltaendern|weltloeschen}
 //
 // Körper der Aktionen (JSON): import = {"dir": …, "ohne_spielerdatei":
 // bool}; profil = api.Profile; autostart = {"an": bool}; zurueckholen =
 // api.RestoreRequest; speicher = api.BudgetRequest; rolle = {"email": …,
 // "admin": bool, "op": bool}; beitritt = {"email": …, "annehmen": bool}
-// (Beitrittsanfrage annehmen oder ablehnen); welt = {"id": …} (Welt für
+// (Beitrittsanfrage annehmen oder ablehnen); benachrichtigung = {"art": …,
+// "an": bool} (ein Windows-Hinweis ein- oder ausschalten; Antwort {"an": bool}); welt = {"id": …} (Welt für
 // „Spielen“ wählen), weltneu = api.WorldCreate, weltaendern = {"id": …,
 // "patch": api.WorldPatch}, weltloeschen = {"id": …, "name": …} (name: der
 // Name der Welt als Bestätigung; die Verwaltung dürfen nur Admins); die übrigen ohne Körper (beendenohne: Hosten
@@ -96,6 +97,19 @@ type Zustand struct {
 	Hinweise       []Hinweis // die letzten 20, Seq aufsteigend
 	// Fortsetzen: Merker „Hosten nach der Wartung fortsetzen“; nil ohne.
 	Fortsetzen *Fortsetzen `json:",omitempty"`
+	// Benachrichtigungen: die Schalter der Windows-Hinweise dieses PCs (für
+	// Admins auch die nur für sie). Ob die Gruppe einen Discord-Kanal hat,
+	// steht in Status.DiscordChannel (nie die Adresse).
+	Benachrichtigungen []BenachSchalter `json:",omitempty"`
+}
+
+// BenachSchalter ist ein Schalter der Windows-Hinweise: Art ist der
+// Schlüssel (für die Aktion „benachrichtigung“), An der wirksame Wert.
+type BenachSchalter struct {
+	Art   string
+	Titel string
+	Hilfe string
+	An    bool
 }
 
 // WeltZustand ist die Weltauswahl der aktiven Gruppe. Die Liste der Welten

@@ -149,7 +149,7 @@ func TestReiterZustandNurAdmins(t *testing.T) {
 			t.Errorf("admin=%v: Reiter bleibt %v", admin, u.reiter)
 		}
 	}
-	if reiterNamen[reiterZustand] != "Zustand" || reiterZustand != anzahlReiter-1 {
+	if reiterNamen[reiterZustand] != "Zustand" || reiterZustand != reiterStatistik+1 {
 		t.Errorf("Reiter Zustand: Name %q, Stelle %d von %d (soll hinten angehängt sein)", reiterNamen[reiterZustand], reiterZustand, anzahlReiter)
 	}
 }

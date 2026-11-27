@@ -61,11 +61,16 @@ const (
 //   - CPUScore: SHA-256-Durchsatz eines Kerns in MB/s (siehe cpuScore),
 //   - UploadMbps: Upload zum Koordinator in Mbit/s (client.SpeedTest),
 //   - RAMFreeMB, RAMTotalMB: verfügbarer und gesamter RAM in MiB (wie -Xmx),
+//   - PingMs: Median von 7 Round-Trips zum Koordinator (client.Ping); nur
+//     gesetzt, wenn der Koordinator ping_ms kennt (GET /v1/ping antwortet) und
+//     die Messung gelang, sonst 0 (fehlt; in der Host-Wahl neutral),
 //   - XmxMB: der übergebene Wert, also das Xmx des Profils, mit dem dieser
 //     PC hosten würde.
 //
 // Die Messungen laufen nacheinander, damit sich CPU-Messung und Upload nicht
-// gegenseitig stören; zusammen dauern sie etwa 1 s plus den Upload von 8 MiB.
+// gegenseitig stören (der Ping kommt zuerst, solange die Leitung und der Kern
+// ruhig sind); zusammen dauern sie etwa 1 s plus den Upload von 8 MiB.
+// Scheitert die Ping-Messung, fehlt PingMs (0) – Spielen geht trotzdem weiter.
 // Scheitert die Upload-Messung, zählt der letzte gemessene Wert dieses
 // Prozesses (sonst 0) – Spielen geht trotzdem weiter. Scheitert eine andere
 // Messung oder endet ctx, ist das Ergebnis leer und der Fehler nennt die
@@ -75,6 +80,7 @@ func Measure(ctx context.Context, c *client.Client, xmxMB int) (api.Score, error
 	if err != nil {
 		return api.Score{}, fmt.Errorf("RAM-Messung: %w", err)
 	}
+	pingMs := measurePing(ctx, c)
 	cpu, err := measureCPU(ctx)
 	if err != nil {
 		return api.Score{}, fmt.Errorf("CPU-Messung: %w", err)
@@ -95,7 +101,34 @@ func Measure(ctx context.Context, c *client.Client, xmxMB int) (api.Score, error
 		RAMFreeMB:  int(vm.Available >> 20),
 		RAMTotalMB: int(vm.Total >> 20),
 		XmxMB:      xmxMB,
+		PingMs:     pingMs,
 	}, nil
+}
+
+// measurePing liefert den Ping zum Koordinator in ms für Score.PingMs, 0 wenn
+// er fehlen soll: Messung gescheitert oder der Koordinator ist älter (404 auf
+// GET /v1/ping; er lehnt das Feld ping_ms ab, der geschätzte Wert kommt nur
+// ins Log).
+func measurePing(ctx context.Context, c *client.Client) float64 {
+	res, err := c.Ping(ctx)
+	if err != nil {
+		if ctx.Err() == nil {
+			log.Printf("bench: Ping-Messung gescheitert, kein Ping-Wert: %v", err)
+		}
+		return 0
+	}
+	ms := pingToMs(res.Median)
+	if res.Estimated {
+		log.Printf("bench: Koordinator ohne /v1/ping (älter): Ping geschätzt %.1f ms, wird nicht gesendet", ms)
+		return 0
+	}
+	log.Printf("bench: Ping zum Server: %.1f ms", ms)
+	return ms
+}
+
+// pingToMs rechnet d in Millisekunden um, mindestens 0,1 (0 hieße „fehlt“).
+func pingToMs(d time.Duration) float64 {
+	return max(0.1, float64(d)/float64(time.Millisecond))
 }
 
 // lastUpload ist die zuletzt gemessene Upload-Rate dieses Prozesses.

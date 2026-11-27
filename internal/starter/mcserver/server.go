@@ -59,6 +59,15 @@ type Server interface {
 	// Say sagt text allen Spielern im Chat an ("say <text>" über Command).
 	Say(ctx context.Context, text string) error
 
+	// Isolated öffnet eine eigene RCON-Verbindung zum laufenden Server und
+	// gibt fn eine Funktion, die einen Befehl darüber ausführt und seine
+	// ganze Antwort liefert (auch mehrteilige, bis 64 KiB); danach wird die
+	// Verbindung geschlossen. Für Befehle der Admins: Eine lange Antwort
+	// trifft so nie die Verbindung, über die der Starter speichert und die
+	// Spielerliste liest. Nach einem Fehler von run ist die Verbindung
+	// nicht mehr nutzbar.
+	Isolated(ctx context.Context, fn func(run func(cmd string) (string, error)) error) error
+
 	// Exited meldet das Ende des zuletzt gestarteten Prozesses: genau ein
 	// Wert, danach ist der Kanal geschlossen. nil heißt sauber beendet nach
 	// Stop, sonst ein Fehler (Absturz, Ende ohne Stop, hart beendet). Vor

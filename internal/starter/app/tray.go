@@ -17,6 +17,7 @@ import (
 	"github.com/ncruces/zenity"
 
 	"github.com/Bazinga0o0/wanderwelt/internal/api"
+	"github.com/Bazinga0o0/wanderwelt/internal/ereignis"
 	"github.com/Bazinga0o0/wanderwelt/internal/starter/bench"
 	"github.com/Bazinga0o0/wanderwelt/internal/starter/client"
 	"github.com/Bazinga0o0/wanderwelt/internal/starter/fensterapi"
@@ -28,7 +29,7 @@ import (
 const maxTooltip = 120
 
 type trayMenu struct {
-	open, play, stop, stopPlain, group, importW, profile, logs, quit *systray.MenuItem
+	open, play, stop, stopPlain, group, importW, profile, logs, report, quit *systray.MenuItem
 
 	shownIcon   phase
 	iconSet     bool
@@ -86,6 +87,7 @@ func (a *App) onTrayReady() {
 	m.importW.Hide()
 	m.profile = systray.AddMenuItem("Profil öffnen", "Leistungsprofil im Editor öffnen")
 	m.logs = systray.AddMenuItem("Log öffnen", "Log des Starters im Editor öffnen")
+	m.report = systray.AddMenuItem("Fehlerbericht erstellen", "Zip mit Logs und Zustand in Downloads speichern (bleibt auf diesem PC, Geheimnisse entfernt)")
 	systray.AddSeparator()
 	if v := a.versionText(); v != "" {
 		systray.AddMenuItem(v, "Installierte Version von wanderwelt").Disable()
@@ -123,6 +125,8 @@ func (a *App) onTrayReady() {
 						showError(err.Error())
 					}
 				}()
+			case <-m.report.ClickedCh:
+				go a.berichtTray()
 			case <-m.quit.ClickedCh:
 				go a.quit()
 			case <-a.refreshCh:
@@ -310,21 +314,33 @@ func (a *App) pollStatus(refreshMe bool) {
 		a.kickRecoverLocked() // wieder erreichbar: Vorgemerktes gleich nachreichen
 	}
 	wartungVorbei := err == nil && st.Maintenance == nil && a.status != nil && a.status.Maintenance != nil
-	if a.c == c { // nicht, wenn die Gruppe inzwischen gewechselt wurde
+	// alt: der Stand, mit dem die Hinweise verglichen werden (nil: kein
+	// Vorgänger – erster Abruf, Koordinator war weg, Gruppe gewechselt).
+	var alt *api.Status
+	gleicheGruppe := a.c == c
+	if gleicheGruppe { // nicht, wenn die Gruppe inzwischen gewechselt wurde
+		alt = a.status
 		a.status, a.statusErr = st, err
 	}
+	meJetzt := a.me
 	// Mitspieler, aber niemand hostet mehr: wieder bereit (solange watchJoin
 	// läuft, entscheidet das dort, ob neu gefragt wird).
 	if err == nil && st.Host == nil && !handoverActive(st) && a.phase == phJoined && a.busy == "" && a.joinCancel == nil {
 		a.phase, a.detail = phReady, ""
 	}
 	a.mu.Unlock()
+	if err == nil && gleicheGruppe && alt != nil {
+		a.hinweiseAus(alt, st, meJetzt) // Benachrichtigungen (benachrichtigung.go)
+	}
 	if wartungVorbei {
 		log.Printf("Wartung am Server vorbei")
+		// Der Hinweis zum automatischen Fortsetzen betrifft den eigenen PC und
+		// kommt immer; das schlichte „vorbei“ gehört zu den Benachrichtigungen
+		// (Schalter „Wartung am Server“).
 		if fortsetzt {
 			go notify("Wartung vorbei – wanderwelt setzt das Hosten gleich automatisch fort (der PC mit der besten Hardware hostet). " +
 				"Im Tray: „" + fensterapi.FortsetzenAbbrechenLabel + "“.")
-		} else {
+		} else if a.benachAn(ereignis.Wartung) {
 			go notify("Wartung vorbei, ihr könnt wieder spielen.")
 		}
 	}

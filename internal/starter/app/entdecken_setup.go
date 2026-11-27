@@ -1,7 +1,7 @@
 package app
 
 // Einrichtung ohne Gruppe: neben dem Gruppencode gibt es „Entdecken
-// (Tunnel-Server und Token)“. Das Mitglied gibt die Adresse des Tunnel-Servers
+// (Server und Token)“. Das Mitglied gibt die Adresse des Tunnel-Servers
 // und seinen Token ein (verdeckt), wanderwelt fragt das Verzeichnis ab und
 // lässt eine Gruppe wählen; danach läuft die Einrichtung wie beim
 // Gruppen-Build (Mitgliedschaft prüfen, sonst Beitrittsanfrage und Warten).
@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/ncruces/zenity"
 
@@ -31,8 +32,13 @@ var errEntdeckenWahl = errors.New("Entdecken gewählt")
 
 const (
 	menuCode      = "Gruppencode einfügen"
-	menuEntdecken = "Entdecken (Tunnel-Server und Token)"
-	menuDatei     = "Ich habe eine Gruppendatei vom Admin"
+	menuEntdecken = "Entdecken (Server und Token)"
+	menuDatei     = "Ich habe eine Gruppendatei"
+
+	// msgServerErklaerung erscheint einmal vor dem Eingabefenster für den Tunnel-Server.
+	msgServerErklaerung = "Gib die Adresse des Tunnel-Servers ein, zum Beispiel tunnel.example.org oder " +
+		"tunnel.example.org:7443 (ohne https://).\n\n" +
+		"Im nächsten Schritt kannst du dort ein Konto anlegen, falls du noch keins hast."
 )
 
 var serverRE = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:[0-9]{1,5})?$`)
@@ -42,35 +48,32 @@ var (
 	// setupMenu: Wahl zwischen Gruppencode, Entdecken und Gruppendatei; ok
 	// false: abgebrochen.
 	setupMenu = func() (choice string, ok bool) {
-		s, err := zenity.List("Willkommen bei wanderwelt!\n\nWie kommst du in eine Gruppe?",
-			[]string{menuCode, menuEntdecken, menuDatei}, zenity.Title("wanderwelt einrichten"), windowIcon(),
+		items := []string{menuCode, menuEntdecken, menuDatei}
+		i, err := zeigeListe(labelGruppeWahl, items, zenity.Title(titelWillkommen), windowIcon(),
 			zenity.OKLabel("Weiter"), zenity.CancelLabel("Abbrechen"), zenity.DisallowEmpty())
-		return s, err == nil
+		if err != nil {
+			return "", false
+		}
+		return items[i], true
 	}
 	// askTunnelServer fragt die Adresse des Tunnel-Servers (host oder
-	// host:port), vorbelegt mit def.
+	// host:port), vorbelegt mit def. Ein Hinweis zur letzten Eingabe kommt als
+	// Meldungsfenster vor das Eingabefenster; ohne Hinweis (der erste Aufruf)
+	// erklärt ein Meldungsfenster einmal, worum es geht.
 	askTunnelServer = func(def, hint string) (string, bool) {
-		text := "Adresse des Tunnel-Servers (zum Beispiel tunnel.example.org:7443):"
-		if hint != "" {
-			text = hint + "\n\n" + text
+		meldung := hint
+		if hint == "" {
+			meldung = msgServerErklaerung
 		}
-		s, err := zenity.Entry(text, zenity.Title("wanderwelt einrichten"), windowIcon(), zenity.EntryText(def),
+		s, err := eingabeMitMeldung(meldung, labelServer, zenity.Title(titelEinrichten), windowIcon(), zenity.EntryText(def),
 			zenity.OKLabel("Weiter"), zenity.CancelLabel("Abbrechen"))
 		return s, err == nil
 	}
 	// pickGroup lässt eine der Gruppen wählen (Index in items).
 	pickGroup = func(items []string) (int, bool) {
-		s, err := zenity.List("Welcher Gruppe möchtest du beitreten?", items, zenity.Title("wanderwelt einrichten"), windowIcon(),
+		i, err := zeigeListe(labelGruppeBeitr, items, zenity.Title(titelEinrichten), windowIcon(),
 			zenity.OKLabel("Beitreten"), zenity.CancelLabel("Abbrechen"), zenity.DisallowEmpty())
-		if err != nil {
-			return 0, false
-		}
-		for i, it := range items {
-			if it == s {
-				return i, true
-			}
-		}
-		return 0, false
+		return i, err == nil
 	}
 	// webFuerServer: Adresse der tunnel-Webseite (dort liegt das Verzeichnis)
 	// zu einem Tunnel-Server host[:port]: https://<host>.
@@ -87,6 +90,7 @@ var (
 // Adressen der gewählten Gruppe und der Token; errCanceled bei Abbruch.
 func (a *App) entdeckenSetup(ctx context.Context) (*group.Invite, string, error) {
 	def, hint := "", ""
+	tokenGezeigt := false // die Anleitung der Token-Schritte kommt nur einmal
 	if a.invite != nil {
 		def = a.invite.TunnelServer // der Standard aus der eingebetteten Gruppe
 	}
@@ -102,21 +106,19 @@ func (a *App) entdeckenSetup(ctx context.Context) (*group.Invite, string, error)
 			continue
 		}
 		hint = ""
-		prompt := "Füge deinen Token ein (Strg+V). Er wird nicht angezeigt."
-		var token string
-		for {
-			s, ok := tokenEntry(prompt)
-			if !ok {
-				return nil, "", errCanceled
-			}
-			if err := group.CheckToken(s); err != nil {
-				prompt = err.Error() + "\n\nFüge deinen Token ein (Strg+V). Er wird nicht angezeigt."
-				continue
-			}
-			token = strings.TrimSpace(s)
-			break
-		}
 		web := webFuerServer(server)
+		// Wer noch kein Konto hat (zum Beispiel ein Freund mit dem öffentlichen
+		// Download), kommt hier mit einem Klick auf die Webseite des
+		// Tunnel-Servers: Konto anlegen, Token erstellen, Token einfügen.
+		token, useFile, err := askToken(&group.Invite{TunnelServer: server, WebURL: web}, !tokenGezeigt)
+		tokenGezeigt = true
+		if err != nil {
+			return nil, "", errCanceled
+		}
+		if useFile {
+			hint = "Für eine Gruppendatei wähle im Startmenü „" + menuDatei + "“."
+			continue
+		}
 		ds, err := verzeichnis.Abfragen(ctx, entdeckenHTTP, web, token)
 		var busy *verzeichnis.BusyError
 		switch {
@@ -173,19 +175,27 @@ func (a *App) setupItems(ctx context.Context, ds []verzeichnis.Dienst, token str
 		go func() {
 			defer wg.Done()
 			defer func() { <-sem }()
-			line := ds[i].Title
+			line := kuerze(ds[i].Title, maxEintrag)
 			c := client.New(&group.Group{Coordinator: ds[i].URL, Token: token})
 			if gi, err := c.Info(ctx); err == nil {
+				title := ds[i].Title
 				if gi.Title != "" {
-					line = gi.Title
+					title = gi.Title
 				}
-				line += fmt.Sprintf(" – %d Mitglieder", gi.Members)
+				// Der Titel wird gekürzt, die Angaben dahinter bleiben (ein
+				// Listeneintrag hat nur maxEintrag Zeichen Platz).
+				status := ""
 				switch gi.You {
 				case api.YouMember:
-					line += " (du bist schon Mitglied)"
+					status = " (Mitglied)"
 				case api.YouRequested:
-					line += " (angefragt)"
+					status = " (angefragt)"
 				}
+				suffix := fmt.Sprintf(" – %d Mitglieder%s", gi.Members, status)
+				if utf8.RuneCountInString(title+suffix) > maxEintrag {
+					suffix = fmt.Sprintf(" – %d Mitgl.%s", gi.Members, status)
+				}
+				line = zeileMitName("", title, suffix, maxEintrag)
 			}
 			items[i] = line
 		}()

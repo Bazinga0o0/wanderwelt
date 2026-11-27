@@ -404,7 +404,7 @@ func newCoord(t *testing.T, tweak ...func(*config.Config)) *coord {
 					copyResponse(w, rec)
 					return
 				}
-				hs.Whitelist, hs.Ops = l.whitelist, l.ops
+				hs.Whitelist, hs.Ops, hs.Bans = l.whitelist, l.ops, l.bans
 				w.Header().Set("Content-Type", "application/json")
 				json.NewEncoder(w).Encode(hs)
 				return
@@ -488,7 +488,7 @@ func newCoord(t *testing.T, tweak ...func(*config.Config)) *coord {
 
 // hostLists sind Whitelist und Ops für coord.lists.
 type hostLists struct {
-	whitelist, ops []api.Player
+	whitelist, ops, bans []api.Player
 }
 
 // copyResponse gibt eine aufgezeichnete Antwort weiter.
@@ -647,6 +647,34 @@ type fakeServer struct {
 	// cmdResp (darf nil sein) antwortet auf Befehle; läuft unter f.mu (nicht
 	// f.mu selbst nehmen, Zustand über players direkt ändern).
 	cmdResp func(f *fakeServer, cmd string) (string, bool)
+	// isolated: Befehle über Isolated (Admin-Aufträge), getrennt von cmds;
+	// isoResp (darf nil sein) antwortet darauf (sonst "ok").
+	isolated []string
+	isoResp  func(cmd string) string
+}
+
+func (f *fakeServer) Isolated(_ context.Context, fn func(run func(string) (string, error)) error) error {
+	f.mu.Lock()
+	running := f.exited != nil
+	f.mu.Unlock()
+	if !running {
+		return errors.New("Server läuft nicht")
+	}
+	return fn(func(cmd string) (string, error) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		f.isolated = append(f.isolated, cmd)
+		if f.isoResp != nil {
+			return f.isoResp(cmd), nil
+		}
+		return "ok", nil
+	})
+}
+
+func (f *fakeServer) isolatedCmds() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.isolated)
 }
 
 // timedText ist eine Ansage oder ein Befehl samt Uhrzeit der Sitzung.

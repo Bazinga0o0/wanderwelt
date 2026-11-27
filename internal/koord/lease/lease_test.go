@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -196,18 +197,18 @@ func cand(email string, up, cpu float64, freeMB int) Candidate {
 	return Candidate{Email: email, Score: api.Score{UploadMbps: up, CPUScore: cpu, RAMFreeMB: freeMB, RAMTotalMB: 131072, XmxMB: 4096}}
 }
 
-func TestBestWeights20_40_40(t *testing.T) {
-	// Gleich bis auf Upload (100 gegen 30): der höhere Upload gewinnt (20 %).
+func TestBestWeights15_30_30_25(t *testing.T) {
+	// Gleich bis auf Upload (100 gegen 30): der höhere Upload gewinnt (15 %).
 	if got := Best([]Candidate{cand("b", 30, 1000, 20000), cand("a", 100, 1000, 20000)}); got != 1 {
 		t.Fatalf("Upload 100 gegen 30 = %d, erwartet 1", got)
 	}
-	// CPU zählt 40 %: A (CPU 1000, RAM 16 GB) schlägt B (CPU 500, RAM 20 GB):
-	// 0,2+0,4+0,4·0,25 = 0,70 gegen 0,2+0,2+0,4·0,3125 = 0,525.
+	// CPU zählt 30 %: A (CPU 1000, RAM 16 GB) schlägt B (CPU 500, RAM 20 GB):
+	// 0,15+0,3+0,3·0,25 = 0,525 gegen 0,15+0,15+0,3·0,3125 = 0,394 (je + Ping neutral).
 	if got := Best([]Candidate{cand("b", 100, 500, 20480), cand("a", 100, 1000, 16384)}); got != 1 {
 		t.Fatalf("CPU-Gewicht = %d, erwartet 1", got)
 	}
-	// RAM zählt 40 %: A (CPU 900, RAM 60 GB) schlägt B (CPU 1000, RAM 20 GB):
-	// 0,2+0,36+0,4·0,9375 = 0,935 gegen 0,2+0,4+0,4·0,3125 = 0,725.
+	// RAM zählt 30 %: A (CPU 900, RAM 60 GB) schlägt B (CPU 1000, RAM 20 GB):
+	// 0,15+0,27+0,3·0,9375 = 0,701 gegen 0,15+0,3+0,3·0,3125 = 0,544.
 	if got := Best([]Candidate{cand("b", 100, 1000, 20480), cand("a", 100, 900, 61440)}); got != 1 {
 		t.Fatalf("RAM-Gewicht = %d, erwartet 1", got)
 	}
@@ -465,5 +466,83 @@ func TestAcquireOnlyWhenIdle(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("Request kehrt nicht zurück")
+	}
+}
+
+// candPing: wie cand, mit gemessenem Ping.
+func candPing(email string, up, cpu float64, freeMB int, pingMs float64) Candidate {
+	c := cand(email, up, cpu, freeMB)
+	c.Score.PingMs = pingMs
+	return c
+}
+
+func TestPingScoreScaleIsLinear(t *testing.T) {
+	for _, tc := range []struct{ ms, want float64 }{
+		{0, PingNeutral}, {-5, PingNeutral}, // fehlt
+		{0.1, 1}, {20, 1}, {110, 0.5}, {155, 0.25}, {200, 0}, {900, 0},
+	} {
+		if got := PingScore(tc.ms); math.Abs(got-tc.want) > 1e-9 {
+			t.Errorf("PingScore(%v) = %v, erwartet %v", tc.ms, got, tc.want)
+		}
+	}
+}
+
+func TestBestPingWeight25Percent(t *testing.T) {
+	// Sonst gleich: der niedrigere Ping gewinnt, auch an zweiter Stelle.
+	if got := Best([]Candidate{candPing("a", 100, 1000, 20000, 150), candPing("b", 100, 1000, 20000, 30)}); got != 1 {
+		t.Fatalf("Ping 30 gegen 150 = %d, erwartet 1", got)
+	}
+	// Das Gewicht ist 25 %: Ping 20 statt 200 bringt 0,25 Score. Ein CPU-
+	// Rückstand von 20 % (0,3·0,2 = 0,06) gleicht das nicht aus …
+	slowFast := candPing("a", 100, 1000, 20000, 200)
+	fastWeak := candPing("b", 100, 800, 20000, 20)
+	if got := Best([]Candidate{slowFast, fastWeak}); got != 1 {
+		t.Fatalf("CPU 20 %% schlechter, Ping 20 statt 200 = %d, erwartet 1", got)
+	}
+	// … ein CPU-Rückstand von 90 % (0,27) aber schon: Der Ping entscheidet
+	// nicht allein.
+	fastWeak = candPing("b", 100, 100, 20000, 20)
+	if got := Best([]Candidate{slowFast, fastWeak}); got != 0 {
+		t.Fatalf("CPU 10-fach schlechter darf der Ping nicht ausgleichen = %d, erwartet 0", got)
+	}
+	// Linear: Ping 110 (0,5) liegt genau zwischen 20 (1) und 200 (0): 0,25·0,5
+	// = 0,125 Score-Vorsprung gegen 200; ein CPU-Rückstand von 0,4 (0,12) lässt
+	// ihn gerade noch gewinnen, einer von 0,45 (0,135) nicht mehr.
+	if got := Best([]Candidate{candPing("a", 100, 1000, 20000, 200), candPing("b", 100, 600, 20000, 110)}); got != 1 {
+		t.Fatalf("Ping 110 mit CPU-Rückstand 0,4 = %d, erwartet 1", got)
+	}
+	if got := Best([]Candidate{candPing("a", 100, 1000, 20000, 200), candPing("b", 100, 550, 20000, 110)}); got != 0 {
+		t.Fatalf("Ping 110 mit CPU-Rückstand 0,45 = %d, erwartet 0", got)
+	}
+}
+
+func TestBestPingMissingIsNeutral(t *testing.T) {
+	// Fehlender Ping (0) steht genau zwischen gut und schlecht.
+	none := cand("none", 100, 1000, 20000)
+	if got := Best([]Candidate{none, candPing("good", 100, 1000, 20000, 20)}); got != 1 {
+		t.Fatalf("Ping 20 gegen fehlend = %d, erwartet 1", got)
+	}
+	if got := Best([]Candidate{candPing("bad", 100, 1000, 20000, 200), none}); got != 1 {
+		t.Fatalf("fehlend gegen Ping 200 = %d, erwartet 1", got)
+	}
+	// Ping 110 ms entspricht genau dem neutralen Wert: Gleichstand, früherer Index.
+	if got := Best([]Candidate{none, candPing("mid", 100, 1000, 20000, 110)}); got != 0 {
+		t.Fatalf("fehlend gegen Ping 110 = %d, erwartet 0 (Gleichstand)", got)
+	}
+	// Ohne jeden Ping ändert sich nichts gegenüber der Wahl nach Hardware.
+	if got := Best([]Candidate{cand("a", 100, 500, 20000), cand("b", 100, 1000, 20000)}); got != 1 {
+		t.Fatalf("ohne Ping = %d, erwartet 1", got)
+	}
+}
+
+func TestBestPingTieAndNoMinimum(t *testing.T) {
+	// Gleicher Ping (und sonst alles gleich), auch über 200 ms: früherer Index.
+	if got := Best([]Candidate{candPing("a", 100, 1000, 20000, 250), candPing("b", 100, 1000, 20000, 400)}); got != 0 {
+		t.Fatalf("Ping 250 gegen 400 = %d, erwartet 0 (Gleichstand ab 200 ms)", got)
+	}
+	// Kein Mindestkriterium: Ein sehr schlechter Ping hält einen sonst viel
+	// besseren PC nicht aus dem Pool.
+	if got := Best([]Candidate{candPing("a", 30, 100, 8000, 20), candPing("b", 100, 2000, 60000, 900)}); got != 1 {
+		t.Fatalf("Ping 900 bei überlegener Hardware = %d, erwartet 1", got)
 	}
 }

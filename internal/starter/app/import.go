@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"slices"
 	"sync"
 	"time"
 
@@ -43,7 +42,7 @@ var worldOpenAfterCopy = worldOpen
 // openImportProgress öffnet das Fortschrittsfenster von „Welt übernehmen“;
 // im Test austauschbar.
 var openImportProgress = func() (zenity.ProgressDialog, error) {
-	return zenity.Progress(zenity.Title("wanderwelt – Welt übernehmen"), windowIcon(), zenity.Pulsate(), zenity.CancelLabel("Abbrechen"))
+	return oeffneFortschritt(zenity.Title("wanderwelt – Welt übernehmen"), windowIcon(), zenity.Pulsate(), zenity.CancelLabel("Abbrechen"))
 }
 
 // importWorld lädt den Speicherstand save als neue Gruppenwelt hoch:
@@ -283,22 +282,18 @@ func (a *App) chooseAndImport() *resultDialog {
 	if err != nil {
 		return errorDialog("Speicherstände lesen: " + err.Error())
 	}
+	// Das Listenfenster hat unter Windows nur Platz für eine kurze Zeile und
+	// kurze Einträge (dialoge.go); wohin die Welt kommt und dass die bisherige
+	// Welt als Archiv bleibt, sagt die Rückfrage danach.
 	labels := make([]string, len(saves))
 	for i, s := range saves {
-		labels[i] = s.Label()
+		labels[i] = s.ListenLabel()
 	}
-	choice, err := zenity.List(
-		"Welche Welt soll "+weltNom(ic.worldName)+" werden?\nDie bisherige Welt bleibt als Archiv auf dem Koordinator.",
-		labels,
+	idx, err := zeigeListe(labelWelt, labels,
 		zenity.Title("wanderwelt – Welt übernehmen"), windowIcon(),
-		zenity.Width(720), zenity.Height(420),
 		zenity.OKLabel("Weiter"), zenity.CancelLabel("Abbrechen"),
 		zenity.DisallowEmpty())
 	if err != nil {
-		return nil
-	}
-	idx := slices.Index(labels, choice)
-	if idx < 0 {
 		return nil
 	}
 	save := saves[idx]
@@ -388,7 +383,7 @@ func (a *App) importWithProgress(ic importContext, save SaveInfo, mitDialog bool
 		dmu.Lock()
 		defer dmu.Unlock()
 		if dlg != nil {
-			dlg.Text("Welt übernehmen: " + text)
+			setzeFortschrittText(dlg, text) // die Überschrift des Fensters sagt schon „Welt übernehmen“
 		}
 	}
 	gen, err := importWorld(ictx, ic.c, ic.machineID, save, ic.m.MinecraftVersion, a.hc, progress)

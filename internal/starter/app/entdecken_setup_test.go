@@ -23,13 +23,16 @@ type setupStubs struct {
 	picks      []int
 	items      [][]string
 	tokenAsked int
+	// tokenSteps: Antworten des Token-Menüs nach der Server-Adresse (leer: „Token einfügen“, wenn ein Token da ist, sonst Abbruch); opened: geöffnete Webseiten.
+	tokenSteps []tokenChoice
+	opened     []string
 }
 
 func stubSetup(t *testing.T, web string, s *setupStubs) {
 	t.Helper()
-	oMenu, oServer, oPick, oWeb, oToken := setupMenu, askTunnelServer, pickGroup, webFuerServer, tokenEntry
+	oMenu, oServer, oPick, oWeb, oToken, oTMenu, oOpen := setupMenu, askTunnelServer, pickGroup, webFuerServer, tokenEntry, tokenMenu, openURL
 	t.Cleanup(func() {
-		setupMenu, askTunnelServer, pickGroup, webFuerServer, tokenEntry = oMenu, oServer, oPick, oWeb, oToken
+		setupMenu, askTunnelServer, pickGroup, webFuerServer, tokenEntry, tokenMenu, openURL = oMenu, oServer, oPick, oWeb, oToken, oTMenu, oOpen
 	})
 	setupMenu = func() (string, bool) {
 		if len(s.menu) == 0 {
@@ -61,6 +64,54 @@ func stubSetup(t *testing.T, web string, s *setupStubs) {
 	tokenEntry = func(string) (string, bool) {
 		s.tokenAsked++
 		return s.token, s.token != ""
+	}
+	tokenMenu = func(string) (tokenChoice, bool) {
+		if len(s.tokenSteps) > 0 {
+			c := s.tokenSteps[0]
+			s.tokenSteps = s.tokenSteps[1:]
+			return c, true
+		}
+		if s.token == "" {
+			return 0, false // Abbruch
+		}
+		return choicePaste, true
+	}
+	openURL = func(u string) error {
+		s.opened = append(s.opened, u)
+		return nil
+	}
+}
+
+// Wer noch kein Konto hat (öffentlicher Download), bekommt nach der
+// Server-Adresse die Webseite des Tunnel-Servers geöffnet (Konto anlegen,
+// Token erstellen) und fügt dann den Token ein. „Gruppendatei“ führt zurück
+// zur Server-Frage mit einem Hinweis.
+func TestEntdeckenKontoAnlegenOeffnetWebseite(t *testing.T) {
+	w := neueEntdeckWelt(t)
+	t.Setenv("WANDERWELT_HOME", t.TempDir())
+	k := neuerKoord(t, "Wandergruppe", api.YouNone)
+	w.web.setze(k)
+	s := &setupStubs{
+		server:     []string{"tunnel.example.org", "tunnel.example.org"},
+		token:      entdeckToken,
+		picks:      []int{0},
+		tokenSteps: []tokenChoice{choiceFile, choiceAccount, choiceToken, choicePaste},
+	}
+	stubSetup(t, w.web.ts.URL, s)
+	a := busyApp(t, nil)
+	inv, token, err := a.entdeckenSetup(context.Background())
+	if err != nil || inv == nil || token != entdeckToken {
+		t.Fatalf("%+v %q %v", inv, token, err)
+	}
+	if len(s.opened) != 2 || s.opened[0] != w.web.ts.URL || s.opened[1] != w.web.ts.URL {
+		t.Errorf("geöffnet: %v, erwartet zweimal %s", s.opened, w.web.ts.URL)
+	}
+	// Die zweite Server-Frage zeigt den Hinweis auf die Gruppendatei.
+	if len(s.hints) < 2 || !strings.Contains(s.hints[1], "Gruppendatei") {
+		t.Errorf("Hinweise: %q", s.hints)
+	}
+	if strings.Contains(strings.Join(s.hints, "|"), entdeckToken) || strings.Contains(w.logs.String(), entdeckToken) {
+		t.Error("Token geleakt")
 	}
 }
 
@@ -119,7 +170,7 @@ func TestEinrichtungUeberEntdecken(t *testing.T) {
 	if inv.Coordinator != me.URL || inv.TunnelServer != "tunnel.example.org:7443" || inv.WebURL != w.web.ts.URL {
 		t.Fatalf("Adressen: %+v", inv)
 	}
-	if len(s.items) != 1 || len(s.items[0]) != 2 || !strings.Contains(s.items[0][0], "Andere") || !strings.Contains(s.items[0][1], "Wandergruppe – 4 Mitglieder (du bist schon Mitglied)") {
+	if len(s.items) != 1 || len(s.items[0]) != 2 || !strings.Contains(s.items[0][0], "Andere") || !strings.Contains(s.items[0][1], "Wandergruppe – 4 Mitgl. (Mitglied)") {
 		t.Errorf("Auswahl: %q", s.items)
 	}
 	a.invite = inv

@@ -562,6 +562,7 @@ func (a *App) startHost(in playInput, resp *api.PlayResponse, dauer bool, ov *ov
 		OnEmptyTimeout: func(d time.Duration) { a.dauer.frist.Store(int64(d)) },
 		OwnName:        ownName,
 		OnCommitted:    a.onCommitted,
+		WeltLogs:       weltLogsHaken(in.st.MachineID),
 	}
 	if ov != nil {
 		d.TunnelPort = ov.port

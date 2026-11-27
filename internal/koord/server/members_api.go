@@ -123,6 +123,7 @@ func (s *Server) readMemberOverlaysLocked() {
 		s.names = n
 		delete(s.corrupt, path)
 	}
+	s.readServerListsLocked()
 }
 
 // keepAdminLocked sorgt dafür, dass es einen Admin gibt: Bliebe mit

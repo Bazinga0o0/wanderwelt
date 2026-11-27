@@ -63,6 +63,23 @@ gruppe:
 # oder Anfrage. Standard true. Gilt erst nach einem Neustart.
 # beitritt_ueber_discord: true
 
+# Benachrichtigungen in einen Discord-Kanal (README „Benachrichtigungen
+# (Discord-Webhook)“). Standard: aus. Die Adresse ist ein GEHEIMNIS (wer sie
+# kennt, kann im Kanal schreiben): Datei nur für root und die Gruppe lesbar
+# (root:wanderwelt 0640), Adresse nie weitergeben. Erlaubt nur https auf
+# discord.com bzw. discordapp.com; Discord: Kanal → Integrationen → Webhooks →
+# „Webhook-URL kopieren“. Gilt erst nach einem Neustart.
+# discord_webhook: https://discord.com/api/webhooks/<Nummer>/<Schlüssel>
+# Einzelne Ereignisse umstellen (Standard in Klammern); „beitrittsanfrage“ gibt
+# es auf Discord nie:
+# discord_ereignisse:
+#   host_startet: true     # „X hostet jetzt“ (an)
+#   welt_online: true      # „Die Welt ist online“ (an)
+#   spieler: true          # Beitritt/Verlassen (an)
+#   niemand_hostet: false  # „Niemand hostet mehr“ (aus)
+#   wartung: true          # angekündigt/vorbei (an)
+#   uebergabe: true        # Host-Übergabe läuft/abgeschlossen (an)
+
 # Mitglieder: tunnel-Konto (E-Mail, Groß/Klein egal) und Minecraft-Name.
 # minecraft darf fehlen: Dann meldet das Mitglied den Namen beim Einrichten
 # des Starters selbst. Whitelist und Ops entstehen aus dieser Liste; was

@@ -17,6 +17,8 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Bazinga0o0/wanderwelt/internal/api"
+	"github.com/Bazinga0o0/wanderwelt/internal/ereignis"
+	"github.com/Bazinga0o0/wanderwelt/internal/koord/benachrichtigung"
 )
 
 // DefaultStorageBudget gilt, wenn storage_budget fehlt: 15 GiB.
@@ -76,6 +78,13 @@ type Config struct {
 	// NoDiscordJoin: beitritt_ueber_discord ist false; Standard (Schlüssel
 	// fehlt): Beitritt über Discord erlaubt.
 	NoDiscordJoin bool `yaml:"-"`
+	// DiscordWebhook: Adresse des Discord-Webhooks für Benachrichtigungen
+	// der Gruppe; leer (Standard): aus. Ein Geheimnis (zeigt sich in Logs und
+	// Ausgaben nur als „[geheim]“), geprüft von benachrichtigung.Pruefe.
+	DiscordWebhook benachrichtigung.Webhook `yaml:"discord_webhook"`
+	// DiscordArten: aus discord_ereignisse; stellt Schalter gegenüber dem
+	// Standard (ereignis.Standard) um.
+	DiscordArten map[ereignis.Art]bool `yaml:"-"`
 }
 
 // Grenzen für gruppe.titel und gruppe.beschreibung (Zeichen).
@@ -123,6 +132,9 @@ type rawConfig struct {
 	EmptyTimeout     string `yaml:"empty_timeout"`
 	// BeitrittUeberDiscord: nil (fehlt) heißt erlaubt.
 	BeitrittUeberDiscord *bool `yaml:"beitritt_ueber_discord"`
+	// DiscordEreignisse: Schalter je Ereignis für den Webhook (Schlüssel aus
+	// ereignis.Katalog).
+	DiscordEreignisse map[string]bool `yaml:"discord_ereignisse"`
 }
 
 // Load liest die Konfiguration aus path. Unbekannte Schlüssel, ein
@@ -150,6 +162,28 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("%s: gruppe.beschreibung: %w", path, err)
 	}
 	c.NoDiscordJoin = raw.BeitrittUeberDiscord != nil && !*raw.BeitrittUeberDiscord
+
+	// Der Webhook ist ein Geheimnis: Kein Fehler nennt seinen Wert.
+	if c.DiscordWebhook != "" {
+		w, err := benachrichtigung.Pruefe(string(c.DiscordWebhook))
+		if err != nil {
+			return nil, fmt.Errorf("%s: discord_webhook: %w", path, err)
+		}
+		c.DiscordWebhook = w
+	}
+	for k, v := range raw.DiscordEreignisse {
+		art := ereignis.Art(k)
+		if !ereignis.Bekannt(art) {
+			return nil, fmt.Errorf("%s: discord_ereignisse: unbekanntes Ereignis %q", path, k)
+		}
+		if v && ereignis.NurWindows(art) {
+			return nil, fmt.Errorf("%s: discord_ereignisse: %q gibt es auf Discord nie (nur als Windows-Hinweis für Admins)", path, k)
+		}
+		if c.DiscordArten == nil {
+			c.DiscordArten = map[ereignis.Art]bool{}
+		}
+		c.DiscordArten[art] = v
+	}
 
 	seen := make(map[string]bool, len(c.Members))
 	for i, m := range c.Members {

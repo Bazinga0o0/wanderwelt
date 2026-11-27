@@ -45,7 +45,7 @@ const (
 var version = "dev"
 
 func main() {
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel()})))
 	args := os.Args[1:]
 	switch {
 	case len(args) >= 1 && args[0] == "serve":
@@ -65,6 +65,15 @@ func main() {
 		usage()
 		os.Exit(2)
 	}
+}
+
+// logLevel ist Info; WANDERWELT_DEBUG=1 schaltet Debug ein (dort stehen etwa
+// Fehler beim Senden an Discord, nie die Webhook-Adresse).
+func logLevel() slog.Level {
+	if os.Getenv("WANDERWELT_DEBUG") == "1" {
+		return slog.LevelDebug
+	}
+	return slog.LevelInfo
 }
 
 func usage() {
@@ -176,6 +185,7 @@ func run(cfgPath string) error {
 	// sein), dann alle 5 s. Aufräumen nie beim Start, sondern stündlich:
 	// Welche Blobs ein laufender Upload schon geschickt hat, weiß der
 	// Speicher nur im Speicher.
+	go srv.RunBenachrichtigung(ctx)
 	go every(ctx, expireEvery, true, srv.ExpireTick)
 	go every(ctx, pruneEvery, false, srv.PruneTick)
 	go srv.WarmUUIDs(ctx)

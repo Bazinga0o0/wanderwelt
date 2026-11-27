@@ -90,6 +90,12 @@ type hostenAnsicht struct {
 	notfallWartet  bool
 	notfallFehler  string
 	notfallGemerkt merker[bool]
+
+	// Benachrichtigungen: ein Schalter je Windows-Hinweis (Schlüssel: Art).
+	benach        map[string]*widget.Bool
+	benachWartet  map[string]bool
+	benachGemerkt map[string]*merker[bool]
+	benachFehler  string
 }
 
 // uebernehmen setzt Formular und Schieber auf p.
@@ -146,6 +152,7 @@ func (v *hostenAnsicht) layout(gtx layout.Context, u *oberflaeche, s schnappschu
 			v.notfallGemerkt.setze(an, jetzt, runde)
 		})
 	}
+	v.benachAbgleichen(gtx, u, z, s.runde)
 	if v.notfallOrdner.Clicked(gtx) {
 		v.notfallFehler = ""
 		u.d.aktion("notfallordner", nil, func(err error) {
@@ -235,6 +242,9 @@ func (v *hostenAnsicht) layout(gtx layout.Context, u *oberflaeche, s schnappschu
 	})
 	teile = append(teile, func(gtx layout.Context) layout.Dimensions {
 		return v.windowsKarte(gtx, u)
+	})
+	teile = append(teile, func(gtx layout.Context) layout.Dimensions {
+		return v.benachKarte(gtx, u, z)
 	})
 	teile = append(teile, func(gtx layout.Context) layout.Dimensions {
 		return v.notfallKarte(gtx, u, z.Notfallkopie)
@@ -379,6 +389,80 @@ func notfallStand(n fensterapi.Notfallkopie, jetzt time.Time) string {
 		txt += " · enthält einen noch NICHT hochgeladenen Stand"
 	}
 	return txt
+}
+
+// benachAbgleichen bringt die Schalter der Windows-Hinweise auf den Stand des
+// Zustands und schickt Umlegungen an die Instanz.
+func (v *hostenAnsicht) benachAbgleichen(gtx layout.Context, u *oberflaeche, z *fensterapi.Zustand, runde uint64) {
+	if v.benach == nil {
+		v.benach, v.benachWartet, v.benachGemerkt = map[string]*widget.Bool{}, map[string]bool{}, map[string]*merker[bool]{}
+	}
+	for _, sw := range z.Benachrichtigungen {
+		art := sw.Art
+		b := v.benach[art]
+		if b == nil {
+			b, v.benachGemerkt[art] = new(widget.Bool), new(merker[bool])
+			v.benach[art] = b
+		}
+		if !v.benachWartet[art] {
+			b.Value, _ = v.benachGemerkt[art].gilt(sw.An, gtx.Now, runde)
+		}
+		if b.Update(gtx) && !v.benachWartet[art] {
+			an, jetzt := b.Value, gtx.Now
+			v.benachWartet[art], v.benachFehler = true, ""
+			u.d.aktion("benachrichtigung", map[string]any{"art": art, "an": an}, func(err error) {
+				v.benachWartet[art] = false
+				if err != nil {
+					v.benachFehler = err.Error()
+					return
+				}
+				v.benachGemerkt[art].setze(an, jetzt, runde)
+			})
+		}
+	}
+}
+
+func (v *hostenAnsicht) benachKarte(gtx layout.Context, u *oberflaeche, z *fensterapi.Zustand) layout.Dimensions {
+	t := u.th
+	if len(z.Benachrichtigungen) == 0 {
+		return layout.Dimensions{} // ältere Instanz
+	}
+	discord := "Discord-Kanal der Gruppe: aus"
+	if z.Status != nil && z.Status.DiscordChannel {
+		discord = "Discord-Kanal der Gruppe: an"
+	}
+	zeilen := []layout.FlexChild{
+		layout.Rigid(t.klein("BENACHRICHTIGUNGEN")),
+		layout.Rigid(layout.Spacer{Height: 10}.Layout),
+		layout.Rigid(t.leise("Windows-Hinweise zu dem, was in der Gruppe passiert – auch bei geschlossenem Fenster. " +
+			"Was du selbst auslöst, zeigt wanderwelt nicht doppelt.")),
+	}
+	for _, sw := range z.Benachrichtigungen {
+		b := v.benach[sw.Art]
+		if b == nil {
+			continue
+		}
+		zeilen = append(zeilen,
+			layout.Rigid(layout.Spacer{Height: 14}.Layout),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return schalterZeile(gtx, t, sw.Titel, sw.Hilfe, b, !v.benachWartet[sw.Art])
+			}))
+	}
+	zeilen = append(zeilen,
+		layout.Rigid(layout.Spacer{Height: 16}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions { return t.trenner(gtx) }),
+		layout.Rigid(layout.Spacer{Height: 12}.Layout),
+		layout.Rigid(t.leise(discord+". Ein Admin kann Meldungen der Gruppe in einen Discord-Kanal schicken lassen.")),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if v.benachFehler == "" {
+				return layout.Dimensions{}
+			}
+			return layout.Inset{Top: 8}.Layout(gtx, t.farbig(v.benachFehler, t.f.fehler))
+		}),
+	)
+	return t.karteAbstand(gtx, 20, func(gtx layout.Context) layout.Dimensions {
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx, zeilen...)
+	})
 }
 
 func (v *hostenAnsicht) notfallKarte(gtx layout.Context, u *oberflaeche, n fensterapi.Notfallkopie) layout.Dimensions {

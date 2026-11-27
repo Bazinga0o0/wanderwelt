@@ -153,7 +153,13 @@ func beispielZustand(jetzt time.Time, admin, host bool) *fensterapi.Zustand {
 			HeadCreated: jetzt.Add(-3*time.Minute - 20*time.Second), SnapshotIntervalS: 300,
 		},
 		Hinweise: []fensterapi.Hinweis{{Seq: 1, Zeit: jetzt.Add(-time.Hour), Art: "info", Text: "wanderwelt ist bereit."}},
+		Benachrichtigungen: []fensterapi.BenachSchalter{
+			{Art: "host_startet", Titel: "Jemand hostet", Hilfe: "Ein Mitglied startet den Server – die Welt ist gleich bereit.", An: true},
+			{Art: "welt_online", Titel: "Welt ist online", Hilfe: "Der Server läuft, ihr könnt euch verbinden.", An: true},
+			{Art: "spieler", Titel: "Spieler kommen und gehen", Hilfe: "Wer der Welt beitritt oder sie verlässt (mehrere zusammen in einer Meldung)."},
+		},
 	}
+	z.Status.DiscordChannel = admin
 	if host {
 		z.Status.Host = &api.HostInfo{Email: "mara@example.de", MinecraftName: "Mara", MachineID: "pc-mara"}
 		z.Status.HostReady = true

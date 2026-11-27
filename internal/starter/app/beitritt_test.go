@@ -576,6 +576,9 @@ func TestEinrichtungWartenFehlerHinweis(t *testing.T) {
 	if n != 3 || !strings.Contains(wait.texts[1], "klappt gerade nicht") || strings.Contains(wait.texts[2], "klappt gerade nicht") {
 		t.Fatalf("Texte: %q", wait.texts)
 	}
+	for _, txt := range wait.texts {
+		kurzeZeile(t, "Wartefenster", txt) // eine kurze Zeile: das Fenster ist unter Windows fest (dialoge.go)
+	}
 }
 
 // Angenommen, der Koordinator bestätigt die Mitgliedschaft erst beim dritten

@@ -394,6 +394,16 @@ type Deps struct {
 	// folgende Sitzung den Ordner neu, solange er gelesen wird.
 	OnCommitted func(Committed)
 
+	// WeltLogs (darf nil sein) schreibt die wanderwelt-Logzeilen des Tages in
+	// den Weltordner (wanderwelt-logs/, siehe Paket fehlerbericht); sie
+	// wandern so mit dem Stand zum nächsten Host. Die Sitzung ruft es mit
+	// dem Weltordner auf, wenn ein Stand ansteht, und zwar nur, solange der
+	// Server die Welt nicht gerade für einen Stand angehalten hat: vor
+	// save-off (Zwischenstand, Übergabe) bzw. nach dem Stop (Schluss-Stand),
+	// nie während des Bereitstellens und nie nach dem Hashen. Ein Fehler
+	// oder Absturz darin stört den Stand nicht.
+	WeltLogs func(worldDir string)
+
 	// idle (nur Tests) wird aufgerufen, bevor die Schleife wartet: next ist
 	// der Zeitpunkt, zu dem sie spätestens wieder aufwacht, inflight die Zahl
 	// der Schritte, deren Ergebnis noch aussteht. Bei inflight 0 wartet sie
@@ -553,6 +563,12 @@ type Session struct {
 	members     memberLists
 	membersSeen int64
 	membersBusy bool
+
+	// Aufträge aus dem Reiter „Server“ (auftraege.go): jobsCancel beendet
+	// den Abruf (nil: läuft keiner); jobsPaused lesen die Aufträge, solange
+	// eine Übergabe läuft.
+	jobsCancel context.CancelFunc
+	jobsPaused atomic.Bool
 
 	nextSnap     time.Time
 	snapBusy     bool // Zwischenstand wird bereitgestellt oder hochgeladen
@@ -906,6 +922,7 @@ func (s *Session) step(now time.Time) {
 		s.finalRetryAt = time.Time{}
 		s.maybeStartFinal()
 	}
+	s.jobsStep()
 	if !s.active() {
 		return
 	}
@@ -1408,6 +1425,7 @@ func (s *Session) onStarted(r startResult) {
 	// einer Übergabe gespeicherter Stand kann einen eingefrorenen Tick haben.
 	s.command("tick unfreeze")
 	s.startTunnel(now)
+	s.startJobs()
 }
 
 // snapshotEvery ist der Abstand der Zwischenstände aus den
@@ -1723,9 +1741,9 @@ func (s *Session) say(text string) {
 
 // ---- Whitelist und Ops ----
 
-// memberLists sind Whitelist und Ops: UUID (klein) → Minecraft-Name.
+// memberLists sind Whitelist, Ops und Banns: UUID (klein) → Minecraft-Name.
 type memberLists struct {
-	whitelist, ops map[string]string
+	whitelist, ops, bans map[string]string
 }
 
 // listsFrom liest Whitelist und Ops aus den Host-Einstellungen.
@@ -1739,16 +1757,17 @@ func listsFrom(hs *api.HostSettings) memberLists {
 		}
 		return m
 	}
-	return memberLists{whitelist: toMap(hs.Whitelist), ops: toMap(hs.Ops)}
+	return memberLists{whitelist: toMap(hs.Whitelist), ops: toMap(hs.Ops), bans: toMap(hs.Bans)}
 }
 
 // memberCommands sind die Befehle, die einen Server mit old auf next
-// bringen, verglichen über die UUID, je Gruppe nach Namen sortiert: neue
-// Mitglieder auf die Whitelist, neue Ops, weggefallene Ops (auch entfernter
-// Mitglieder – Ops kämen sonst trotz Whitelist herein), entfernte Mitglieder
-// von der Whitelist und hinaus – nie aber own, den Spieler des Hosts selbst
-// (leer: unbekannt). Ein Name, der kein gültiger Minecraft-Name ist, bekommt
-// keinen Befehl (er könnte weitere Argumente einschleusen).
+// bringen, verglichen über die UUID, je Gruppe nach Namen sortiert:
+// aufgehobene Banns, neue Mitglieder (und Gäste) auf die Whitelist, neue
+// Ops, weggefallene Ops (auch entfernter Mitglieder – Ops kämen sonst trotz
+// Whitelist herein), Entfernte von der Whitelist und hinaus – nie aber own,
+// den Spieler des Hosts selbst (leer: unbekannt) –, zuletzt neue Banns. Ein
+// Name, der kein gültiger Minecraft-Name ist, bekommt keinen Befehl (er
+// könnte weitere Argumente einschleusen).
 func memberCommands(old, next memberLists, own string) []string {
 	var cmds []string
 	added := func(from, to map[string]string) []string {
@@ -1766,6 +1785,9 @@ func memberCommands(old, next memberLists, own string) []string {
 		slices.Sort(names)
 		return names
 	}
+	for _, n := range added(next.bans, old.bans) {
+		cmds = append(cmds, "pardon "+n)
+	}
 	for _, n := range added(old.whitelist, next.whitelist) {
 		cmds = append(cmds, "whitelist add "+n)
 	}
@@ -1781,6 +1803,9 @@ func memberCommands(old, next memberLists, own string) []string {
 			continue
 		}
 		cmds = append(cmds, "whitelist remove "+n, "kick "+n+" "+kickReason)
+	}
+	for _, n := range added(old.bans, next.bans) {
+		cmds = append(cmds, "ban "+n+" "+mcserver.BanReason)
 	}
 	return cmds
 }
@@ -1917,6 +1942,20 @@ func byteSize(n int64) string {
 	}
 }
 
+// weltLogs ruft Deps.WeltLogs mit dem Weltordner auf (siehe dort). Es
+// fängt einen Absturz des Hakens ab: Die Logs dürfen keinen Stand verhindern.
+func (s *Session) weltLogs() {
+	if s.d.WeltLogs == nil {
+		return
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("host: wanderwelt-logs: %v", r)
+		}
+	}()
+	s.d.WeltLogs(s.world)
+}
+
 func (s *Session) base() baseRef {
 	return baseRef{world: s.baseWorld, gen: s.baseGen, uncertain: s.baseUncertain}
 }
@@ -1982,6 +2021,7 @@ func (s *Session) snapshotOp(ctx context.Context, b baseRef, players []string) u
 		return uploadResult{err: fmt.Errorf("Zwischenstand: %w", err)}
 	}
 	defer unlock()
+	s.weltLogs() // vor save-off: der Weltordner ändert sich danach bis zum Hashen nicht mehr
 	t := time.Now()
 	release, err := s.d.Server.SaveBarrier(ctx)
 	if err != nil {
@@ -2042,6 +2082,7 @@ func (s *Session) maybeStartFinal() {
 		if unlock, err := holdSync(s.work); err != nil {
 			r.err = fmt.Errorf("Schluss-Stand: %w", err)
 		} else {
+			s.weltLogs() // der Server ist gestoppt, vor dem Bereitstellen
 			t := time.Now()
 			if err := s.restage(s.work); err != nil {
 				r.err = fmt.Errorf("Schluss-Stand bereitstellen: %w", err)

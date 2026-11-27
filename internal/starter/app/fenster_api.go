@@ -33,6 +33,7 @@ import (
 	"github.com/shirou/gopsutil/v4/mem"
 
 	"github.com/Bazinga0o0/wanderwelt/internal/api"
+	"github.com/Bazinga0o0/wanderwelt/internal/ereignis"
 	"github.com/Bazinga0o0/wanderwelt/internal/starter/bench"
 	"github.com/Bazinga0o0/wanderwelt/internal/starter/client"
 	"github.com/Bazinga0o0/wanderwelt/internal/starter/fensterapi"
@@ -67,6 +68,7 @@ const (
 	aktionSpeicher      = "speicher"
 	aktionRolle         = "rolle"
 	aktionLogordner     = "logordner"
+	aktionFehlerbericht = "fehlerbericht"       // Zip mit Logs und Zustand nach Downloads
 	aktionNotfall       = "notfallkopie"        // Haken „Notfallkopie behalten“
 	aktionNotfallOrdner = "notfallordner"       // Ordner der Notfallkopie öffnen
 	aktionMcName        = "mcname"              // Admin: Minecraft-Namen eines Mitglieds ändern
@@ -77,6 +79,7 @@ const (
 	aktionWeltAendern   = "weltaendern"         // Admin: Welt umbenennen / Eigenschaften ändern
 	aktionWeltLoeschen  = "weltloeschen"        // Admin: Welt löschen (mit Bestätigung)
 	aktionFortsetzen    = "fortsetzenabbrechen" // Hosten nach der Wartung nicht fortsetzen
+	aktionBenach        = "benachrichtigung"    // Windows-Hinweis ein- oder ausschalten
 )
 
 // setAutostart trägt die installierte Kopie in den Autostart ein bzw.
@@ -140,6 +143,22 @@ func (a *App) ansicht(w http.ResponseWriter, r *http.Request, name string) {
 		koordAufruf(a, w, r, "Welten", func(ctx context.Context, c *client.Client) (*api.WorldList, error) {
 			return c.Worlds(ctx)
 		})
+	case "serverlisten":
+		if !a.istAdmin() {
+			antwortFehler(w, http.StatusForbidden, "Whitelist, Ops und Banns sehen nur Admins.")
+			return
+		}
+		koordAufruf(a, w, r, "Serverlisten", func(ctx context.Context, c *client.Client) (*api.ServerLists, error) {
+			return c.ServerLists(ctx)
+		})
+	case "spielregeln":
+		if !a.istAdmin() {
+			antwortFehler(w, http.StatusForbidden, "Spielregeln sehen nur Admins.")
+			return
+		}
+		serverAufruf(a, w, r, "Spielregeln", func(ctx context.Context, c *client.Client) (*api.Gamerules, error) {
+			return c.Gamerules(ctx)
+		})
 	case "entdecken":
 		a.entdeckenAnsicht(w, r)
 	case "speicherstaende":
@@ -157,9 +176,13 @@ func (a *App) ansicht(w http.ResponseWriter, r *http.Request, name string) {
 func (a *App) aktion(w http.ResponseWriter, r *http.Request, name string, body []byte) {
 	switch name {
 	case aktionBeenden, aktionBeendenOhne, aktionImport, aktionProfil, aktionAutostart, aktionZurueckholen,
-		aktionSpeicher, aktionRolle, aktionLogordner, aktionMcName, aktionBeitritt, aktionNotfall, aktionNotfallOrdner, aktionGruppe, aktionEntdeckenBeitritt,
-		aktionWelt, aktionWeltNeu, aktionWeltAendern, aktionWeltLoeschen, aktionFortsetzen:
+		aktionSpeicher, aktionRolle, aktionLogordner, aktionFehlerbericht, aktionMcName, aktionBeitritt, aktionNotfall, aktionNotfallOrdner, aktionGruppe, aktionEntdeckenBeitritt,
+		aktionWelt, aktionWeltNeu, aktionWeltAendern, aktionWeltLoeschen, aktionFortsetzen, aktionBenach:
 		log.Printf("Fenster: %s", name)
+	case fensterapi.AktionServerliste, fensterapi.AktionSpielregel, fensterapi.AktionBefehl:
+		log.Printf("Fenster: %s", name)
+		a.serverAktion(w, r, name, body)
+		return
 	default:
 		http.Error(w, "unbekannte Aktion", http.StatusNotFound)
 		return
@@ -178,6 +201,25 @@ func (a *App) aktion(w http.ResponseWriter, r *http.Request, name string, body [
 	case aktionFortsetzen:
 		a.fortAbbrechen()
 		w.WriteHeader(http.StatusOK)
+	case aktionBenach:
+		var req struct {
+			Art string `json:"art"`
+			An  bool   `json:"an"`
+		}
+		if err := json.Unmarshal(body, &req); err != nil || req.Art == "" {
+			antwortFehler(w, http.StatusBadRequest, "Welcher Hinweis? Erwartet {\"art\": …, \"an\": …}.")
+			return
+		}
+		if !ereignis.Bekannt(ereignis.Art(req.Art)) {
+			antwortFehler(w, http.StatusBadRequest, "Diesen Hinweis gibt es nicht.")
+			return
+		}
+		if err := a.setBenach(ereignis.Art(req.Art), req.An); err != nil {
+			antwortFehler(w, http.StatusInternalServerError, "Benachrichtigung lässt sich nicht umstellen: "+err.Error())
+			return
+		}
+		log.Printf("Benachrichtigung %s %s (Fenster)", req.Art, onOff(req.An))
+		antwortJSON(w, http.StatusOK, map[string]bool{"an": a.benachAn(ereignis.Art(req.Art))})
 	case aktionBeendenOhne:
 		if !a.isHosting() {
 			antwortFehler(w, http.StatusConflict, "Du hostest gerade nicht.")
@@ -351,6 +393,8 @@ func (a *App) aktion(w http.ResponseWriter, r *http.Request, name string, body [
 		antwortJSON(w, http.StatusOK, struct{}{})
 	case aktionWelt, aktionWeltNeu, aktionWeltAendern, aktionWeltLoeschen:
 		a.weltenAktion(w, r, name, body)
+	case aktionFehlerbericht:
+		a.fensterBericht(w, r)
 	case aktionLogordner:
 		if err := openFolder(filepath.Dir(LogPath())); err != nil {
 			antwortFehler(w, http.StatusInternalServerError, err.Error())
@@ -408,6 +452,7 @@ func (a *App) zustand() fensterapi.Zustand {
 	z.Notfallkopie = a.notfallZustand()
 	z.Hinweise = a.hinweise.abfrage(fensterNow())
 	z.Fortsetzen = a.fortZustand()
+	z.Benachrichtigungen = a.benachZustand(z.Me)
 	return z
 }
 

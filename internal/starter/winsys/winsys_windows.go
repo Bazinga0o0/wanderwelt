@@ -517,6 +517,30 @@ func DocumentsDir() (string, error) {
 	return windows.KnownFolderPath(windows.FOLDERID_Documents, 0)
 }
 
+// DownloadsDir liefert den Downloads-Ordner des Benutzers (Known Folder).
+func DownloadsDir() (string, error) {
+	return windows.KnownFolderPath(windows.FOLDERID_Downloads, 0)
+}
+
+// SystemInfo beschreibt Windows und Prozessor in zwei Zeilen (für den
+// Fehlerbericht; kein Rechnername, kein Benutzername).
+func SystemInfo() string {
+	var s string
+	if v := windows.RtlGetVersion(); v != nil {
+		s = fmt.Sprintf("Windows: %d.%d.%d (%s)\n", v.MajorVersion, v.MinorVersion, v.BuildNumber, runtime.GOARCH)
+	} else {
+		s = "Windows: unbekannt (" + runtime.GOARCH + ")\n"
+	}
+	cpu := "unbekannt"
+	if k, err := registry.OpenKey(registry.LOCAL_MACHINE, `HARDWARE\DESCRIPTION\System\CentralProcessor\0`, registry.QUERY_VALUE); err == nil {
+		if n, _, err := k.GetStringValue("ProcessorNameString"); err == nil && n != "" {
+			cpu = n
+		}
+		k.Close()
+	}
+	return s + fmt.Sprintf("Prozessor: %s, %d logische Kerne\n", cpu, runtime.NumCPU())
+}
+
 // DesktopDir liefert den Desktop-Ordner des Benutzers.
 func DesktopDir() (string, error) {
 	return windows.KnownFolderPath(windows.FOLDERID_Desktop, 0)

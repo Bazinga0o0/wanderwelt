@@ -21,6 +21,13 @@ type Score struct {
 	RAMFreeMB  int     `json:"ram_free_mb"`
 	RAMTotalMB int     `json:"ram_total_mb"`
 	XmxMB      int     `json:"xmx_mb"`
+	// PingMs: Median von 7 Round-Trips zum Koordinator in ms (Latenz Host-PC
+	// ↔ Koordinator-Server, durch den alle Spieler zum Host laufen); 0 =
+	// fehlt (Messung gescheitert oder älterer Starter): in der Host-Wahl
+	// neutral. Ein Starter schickt das Feld nur, wenn der Koordinator es
+	// kennt (er antwortet auf GET /v1/ping): Ein älterer Koordinator lehnt
+	// unbekannte Felder ab.
+	PingMs float64 `json:"ping_ms,omitempty"`
 }
 
 // PlayRequest: Ein Starter will spielen (oder mit UploadOnly einen sauber
@@ -218,6 +225,10 @@ type Status struct {
 	// dann wie vor den Welten.
 	Worlds       []GroupWorld `json:"worlds,omitempty"`
 	RunningWorld string       `json:"running_world,omitempty"`
+	// DiscordChannel: Der Koordinator schickt Meldungen der Gruppe an einen
+	// Discord-Kanal (nur „an“; die Webhook-Adresse erfährt nie jemand).
+	// Fehlendes Feld = aus (auch bei älteren Koordinatoren).
+	DiscordChannel bool `json:"discord_channel,omitempty"`
 }
 
 // Werte von GroupInfo.You.
@@ -488,6 +499,10 @@ type HostSettings struct {
 	// Chat: Chat-Einstellung der Zuschlags-Welt. nil (älterer Koordinator):
 	// Der Host lässt die Konfig-Datei der Chatverlauf-Mod unberührt.
 	Chat *ChatSettings `json:"chat,omitempty"`
+	// Bans: gebannte Spieler (Reiter „Server“, server.go). Der Host schreibt
+	// banned-players.json bei jedem Start ganz aus dieser Liste (fehlt sie:
+	// leer) und gleicht sie zur Laufzeit an wie Whitelist und Ops.
+	Bans []Player `json:"bans,omitempty"`
 }
 
 // Erlaubter Abstand der Zwischenstände in Sekunden (1–30 Minuten).

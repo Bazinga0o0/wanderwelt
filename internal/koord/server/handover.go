@@ -326,7 +326,7 @@ func (s *Server) handlePresence(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "ungültige machine_id")
 		return
 	}
-	if sc := req.Score; sc.UploadMbps < 0 || sc.CPUScore < 0 || sc.RAMFreeMB < 0 || sc.RAMTotalMB < 0 || sc.XmxMB < 0 {
+	if sc := req.Score; sc.UploadMbps < 0 || sc.CPUScore < 0 || sc.RAMFreeMB < 0 || sc.RAMTotalMB < 0 || sc.XmxMB < 0 || sc.PingMs < 0 {
 		writeError(w, http.StatusBadRequest, "Messwerte mit negativen Zahlen")
 		return
 	}

@@ -37,42 +37,46 @@ const (
 )
 
 var tokenMenuItems = map[tokenChoice]string{
-	choiceAccount: "1. Konto anlegen (öffnet die Webseite)",
-	choiceToken:   "2. Token erstellen (öffnet die Webseite)",
+	choiceAccount: "1. Konto anlegen (Webseite)",
+	choiceToken:   "2. Token erstellen (Webseite)",
 	choicePaste:   "3. Token einfügen",
-	choiceFile:    "Ich habe eine Gruppendatei vom Admin",
+	choiceFile:    "Ich habe eine Gruppendatei",
 }
 
 // Dialoge der Einrichtung; im Test austauschbar.
 var (
-	// tokenMenu zeigt das Menü; ok false: abgebrochen.
-	tokenMenu = func(text string) (tokenChoice, bool) {
+	// tokenMenu zeigt das Menü; ok false: abgebrochen. intro: die Anleitung,
+	// die vor dem Menü als Meldungsfenster erscheint (beim ersten Mal; sonst
+	// leer). Das Menüfenster selbst hat nur eine kurze Zeile (dialoge.go).
+	tokenMenu = func(intro string) (tokenChoice, bool) {
 		order := []tokenChoice{choiceAccount, choiceToken, choicePaste, choiceFile}
 		items := make([]string, len(order))
 		for i, c := range order {
 			items[i] = tokenMenuItems[c]
 		}
-		s, err := zenity.List(text, items, zenity.Title("wanderwelt einrichten"), windowIcon(),
+		title := titelEinrichten
+		if intro != "" {
+			title = titelWillkommen
+		}
+		i, err := listeMitMeldung(intro, labelWeiter, items, zenity.Title(title), windowIcon(),
 			zenity.OKLabel("Weiter"), zenity.CancelLabel("Abbrechen"), zenity.DisallowEmpty())
 		if err != nil {
 			return 0, false
 		}
-		for _, c := range order {
-			if tokenMenuItems[c] == s {
-				return c, true
-			}
-		}
-		return 0, false
+		return order[i], true
 	}
-	// tokenEntry fragt den Token mit verdeckter Eingabe.
-	tokenEntry = func(text string) (string, bool) {
-		s, err := zenity.Entry(text, zenity.Title("wanderwelt einrichten"), windowIcon(), zenity.HideText())
+	// tokenEntry fragt den Token mit verdeckter Eingabe. hinweis: Fehler zur
+	// letzten Eingabe; er kommt als Meldungsfenster vor das Eingabefenster.
+	tokenEntry = func(hinweis string) (string, bool) {
+		s, err := eingabeMitMeldung(hinweis, labelToken, zenity.Title(titelEinrichten), windowIcon(), zenity.HideText())
 		return s, err == nil
 	}
 	openURL = winsys.OpenURL
-	// openJoinWait öffnet das Wartefenster („wartet auf Freigabe“).
+	// openJoinWait öffnet das Wartefenster („wartet auf Freigabe“); die
+	// längere Erklärung kommt einmal vorher als Meldungsfenster.
 	openJoinWait = func() (zenity.ProgressDialog, error) {
-		return zenity.Progress(zenity.Title("wanderwelt – wartet auf Freigabe"), windowIcon(),
+		showInfo(msgWartenErklaerung)
+		return oeffneFortschritt(zenity.Title("wanderwelt – wartet auf Freigabe"), windowIcon(),
 			zenity.Pulsate(), zenity.CancelLabel("Später fortsetzen"))
 	}
 	// joinPollInterval: So oft fragt das Wartefenster den Stand ab.
@@ -80,7 +84,20 @@ var (
 )
 
 const (
-	msgTokenInvalid = "Token ungültig oder Konto noch nicht freigeschaltet.\n\n" +
+	// msgTokenAnleitung erscheint einmal als Meldungsfenster vor dem Menü.
+	msgTokenAnleitung = "Willkommen bei wanderwelt!\n\nSo kommst du in die Gruppe:\n\n" +
+		"1. Lege auf der Webseite ein Konto an (wenn du noch keins hast), bestätige deine E-Mail-Adresse " +
+		"über den Link in der Mail und warte, bis ein Admin dein Konto freischaltet.\n\n" +
+		"2. Erstelle auf der Webseite unter „API Tokens“ einen Token: Name eingeben (zum Beispiel „wanderwelt“), " +
+		"dann „Create token“. Es gibt nur diese eine Art von Token; kopiere ihn gleich, er wird nur einmal angezeigt.\n\n" +
+		"3. Füge den Token danach hier ein (Strg+V). Er wird nicht angezeigt."
+	// msgWartenErklaerung erscheint einmal vor dem Wartefenster.
+	msgWartenErklaerung = "Deine Beitrittsanfrage ist raus. Ein Admin muss sie noch annehmen – das kann dauern.\n\n" +
+		"Du musst nichts tun: wanderwelt fragt regelmäßig nach. Du kannst das Wartefenster auch mit „Später fortsetzen“ " +
+		"schließen: wanderwelt startet mit Windows wieder und meldet sich, sobald ein Admin dich angenommen hat."
+	// msgNameErklaerung erscheint vor der ersten Namensfrage der Beitrittsanfrage.
+	msgNameErklaerung = "Als Nächstes brauchen wir deinen Minecraft-Java-Namen: Damit weiß der Admin, wer du bist, und du kommst auf die Whitelist."
+	msgTokenInvalid   = "Token ungültig oder Konto noch nicht freigeschaltet.\n\n" +
 		"Prüfe, ob du den ganzen Token kopiert hast, und ob dein tunnel-Konto schon freigeschaltet ist " +
 		"(das macht der Admin). Dann kannst du es noch einmal versuchen."
 	nameEntryTries = 5
@@ -221,15 +238,14 @@ func (a *App) chooseGroupInviteRun(ctx context.Context) (*group.Group, *api.Me, 
 // askToken führt durch Webseite und Token-Eingabe. useFile: Das Mitglied hat
 // doch eine Gruppendatei.
 func askToken(inv *group.Invite, first bool) (token string, useFile bool, err error) {
-	text := "Willkommen bei wanderwelt!\n\nSo kommst du in die Gruppe:\n" +
-		"1. Lege auf der Webseite ein Konto an (wenn du noch keins hast).\n" +
-		"2. Erstelle dort einen Token.\n" +
-		"3. Füge den Token hier ein."
-	if !first {
-		text = "Wie geht es weiter?"
+	// Die Anleitung kommt nur beim ersten Mal (einmal als Meldungsfenster vor
+	// dem Menü), das Menü selbst fragt „Wie geht es weiter?“.
+	intro := ""
+	if first {
+		intro = msgTokenAnleitung
 	}
 	for {
-		c, ok := tokenMenu(text)
+		c, ok := tokenMenu(intro)
 		if !ok {
 			return "", false, errCanceled
 		}
@@ -241,20 +257,20 @@ func askToken(inv *group.Invite, first bool) (token string, useFile bool, err er
 		case choiceFile:
 			return "", true, nil
 		case choicePaste:
-			prompt := "Füge deinen Token ein (Strg+V). Er wird nicht angezeigt."
+			hinweis := ""
 			for {
-				s, ok := tokenEntry(prompt)
+				s, ok := tokenEntry(hinweis)
 				if !ok {
 					break // zurück ins Menü
 				}
 				if err := group.CheckToken(s); err != nil {
-					prompt = err.Error() + "\n\nFüge deinen Token ein (Strg+V). Er wird nicht angezeigt."
+					hinweis = err.Error()
 					continue
 				}
 				return strings.TrimSpace(s), false, nil
 			}
 		}
-		text = "Wie geht es weiter?"
+		intro = ""
 	}
 }
 
@@ -349,7 +365,7 @@ func awaitJoin(ctx context.Context, g *group.Group) (*api.Me, error) {
 // Der erkannte Name aus dem Minecraft-Launcher wird bestätigt (wie bei der
 // Namensfrage der Mitglieder); sonst wird er eingegeben.
 func requestJoin(ctx context.Context, c *client.Client) (*api.JoinStatus, error) {
-	prompt := "Dein Minecraft-Java-Name (damit der Admin weiß, wer du bist, und du auf die Whitelist kommst):"
+	hinweis := msgNameErklaerung
 	name := ""
 	if n, _, ok := detectMinecraftName(deps.MinecraftDir()); ok && mcNameRE.MatchString(n) &&
 		nameConfirm(fmt.Sprintf("Du spielst Minecraft als „%s“ – stimmt das?", n)) {
@@ -357,12 +373,12 @@ func requestJoin(ctx context.Context, c *client.Client) (*api.JoinStatus, error)
 	}
 	for i := 0; i < nameEntryTries; i++ {
 		if name == "" {
-			s, ok := nameEntry(prompt)
+			s, ok := nameEntry(hinweis)
 			if !ok {
 				return nil, errCanceled
 			}
 			if !mcNameRE.MatchString(s) {
-				prompt = "Der Name besteht aus 3 bis 16 Buchstaben, Ziffern oder Unterstrichen.\n\nDein Minecraft-Java-Name:"
+				hinweis = "Der Name besteht aus 3 bis 16 Buchstaben, Ziffern oder Unterstrichen."
 				continue
 			}
 			name = s
@@ -385,14 +401,14 @@ func requestJoin(ctx context.Context, c *client.Client) (*api.JoinStatus, error)
 		}
 		switch se.StatusCode {
 		case 400:
-			prompt = se.Message + "\n\nDein Minecraft-Java-Name:"
+			hinweis = se.Message
 		case 409:
 			// Name vergeben oder schon angefragt – oder die eigene Anfrage
 			// läuft/ist angenommen (anderes Gerät, Neustart).
 			if cur, err := c.JoinStatus(ctx); err == nil && (cur.State == api.JoinOpen || cur.State == api.JoinAccepted) {
 				return cur, nil
 			}
-			prompt = fmt.Sprintf("Der Name „%s“ gehört schon einem Mitglied oder ist schon angefragt.\n\nBitte gib einen anderen Namen ein, oder frag den Admin.\n\nDein Minecraft-Java-Name:", taken)
+			hinweis = fmt.Sprintf("Der Name „%s“ gehört schon einem Mitglied oder ist schon angefragt.\n\nBitte gib einen anderen Namen ein, oder frag den Admin.", taken)
 		case 429:
 			if cur, err := c.JoinStatus(ctx); err == nil && cur.State == api.JoinOpen {
 				return cur, nil
@@ -423,10 +439,9 @@ func waitForJoin(ctx context.Context, c *client.Client) (string, error) {
 		return "", errCanceled
 	}
 	defer dlg.Close()
-	waitText := "Deine Beitrittsanfrage ist raus. Ein Admin muss sie noch annehmen – das kann dauern.\n\n" +
-		"Du musst nichts tun: wanderwelt fragt regelmäßig nach. Du kannst das Fenster auch mit „Später fortsetzen“ " +
-		"schließen: wanderwelt startet mit Windows wieder und meldet sich, sobald ein Admin dich angenommen hat."
-	dlg.Text(waitText)
+	// Die Erklärung kam schon als Meldungsfenster vor dem Wartefenster
+	// (openJoinWait); das Fenster selbst zeigt nur eine kurze Zeile.
+	setzeFortschrittText(dlg, textWartenAufFreigabe)
 	gone = dlg.Done()
 	t := time.NewTicker(joinPollInterval)
 	defer t.Stop()
@@ -447,13 +462,13 @@ func waitForJoin(ctx context.Context, c *client.Client) (string, error) {
 			if err != nil {
 				log.Printf("Beitritt: Stand: %v", err)
 				if fails++; fails == waitFailLimit {
-					dlg.Text("Die Abfrage beim Koordinator klappt gerade nicht (" + explain(err) + ").\n\n" +
-						"wanderwelt versucht es weiter. Bleibt es so, frag den Admin.\n\n" + waitText)
+					// Die Ursache steht im Log (oben); das Fenster hat nur Platz für eine Zeile.
+					setzeFortschrittText(dlg, textAbfrageKlemmt)
 				}
 				continue
 			}
 			if fails >= waitFailLimit {
-				dlg.Text(waitText)
+				setzeFortschrittText(dlg, textWartenAufFreigabe)
 			}
 			fails = 0
 			if st.State != api.JoinOpen {

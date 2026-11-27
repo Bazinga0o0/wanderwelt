@@ -1,6 +1,10 @@
 package server
 
-import "time"
+import (
+	"time"
+
+	"github.com/Bazinga0o0/wanderwelt/internal/koord/benachrichtigung"
+)
 
 // SetUUIDTimeout setzt die Frist für das Auflösen der Minecraft-Namen
 // (nur Tests).
@@ -42,4 +46,20 @@ func (s *Server) SetManifestCheckHook(f func()) { s.manifestCheckHook = f }
 // Tests; vor dem ersten Aufruf).
 func (s *Server) SetDiskTotal(total func(dir string) int64) {
 	s.health.diskTotal = func(dir string) (int64, bool) { return total(dir), true }
+}
+
+// SetBenachrichtigung setzt den Discord-Dienst (nur Tests; vor dem ersten
+// Aufruf).
+func (s *Server) SetBenachrichtigung(d *benachrichtigung.Dienst) { s.benach = d }
+
+// SetJobPoll setzt, wie lange ein Abruf des Hosts ohne Aufträge offen bleibt
+// (nur Tests).
+func (s *Server) SetJobPoll(d time.Duration) { s.jobPoll = d }
+
+// SetJobWait setzt, wie lange ein Admin auf das Ergebnis eines Auftrags
+// wartet, und liefert die Rücknahme (nur Tests).
+func SetJobWait(d time.Duration) (restore func()) {
+	old := jobWait
+	jobWait = d
+	return func() { jobWait = old }
 }

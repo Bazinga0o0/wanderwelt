@@ -86,9 +86,9 @@ func TestBedienung(t *testing.T) {
 	}
 
 	bild()
-	// Reihenfolge: Start, Welt, Hosten, Entdecken, Mitglieder, Log, Statistik, Zustand (nur Admins), dann „Spielen“
+	// Reihenfolge: Start, Welt, Hosten, Entdecken, Mitglieder, Log, Statistik, Zustand, Server (nur Admins), dann „Spielen“
 	// (mit Weltauswahl kommen deren Knöpfe davor, siehe TestWeltAuswahlTabFolge).
-	vor(9)
+	vor(10)
 	r.ClickFocus()
 	bild()
 	if got := warteAktionen(1); len(got) != 1 || got[0] != "play null" {
@@ -232,8 +232,8 @@ func TestGespeichertBleibt(t *testing.T) {
 	alt := z.Profil
 	b := neuerBedienTest(t, schnappschuss{verb: verbunden, runde: 1, z: z, mitglieder: beispielMitglieder()}, reiterHosten)
 	b.bild()
-	// Schalter Dauerbetrieb per Tastatur: acht Reiter, C2ME, Dauerbetrieb.
-	for range 10 {
+	// Schalter Dauerbetrieb per Tastatur: neun Reiter, C2ME, Dauerbetrieb.
+	for range 11 {
 		b.r.MoveFocus(key.FocusForward)
 	}
 	if !b.r.Source().Focused(&b.u.hosten.dauer) {
@@ -281,7 +281,7 @@ func TestGespeichertBleibt(t *testing.T) {
 	b.u.reiter = reiterMitglieder
 	b.r = input.Router{}
 	b.bild()
-	for range 10 { // acht Reiter, „ändern“ von Jonas, dann sein Admin-Schalter
+	for range 11 { // neun Reiter, „ändern“ von Jonas, dann sein Admin-Schalter
 		b.r.MoveFocus(key.FocusForward)
 	}
 	b.r.ClickFocus()
@@ -388,8 +388,8 @@ func TestBeitrittsanfragenBedienung(t *testing.T) {
 	b := neuerBedienTest(t, s, reiterMitglieder)
 	b.bild()
 
-	// Fokus: acht Reiter, dann „Annehmen“ der ersten Anfrage.
-	for range 9 {
+	// Fokus: neun Reiter, dann „Annehmen“ der ersten Anfrage.
+	for range 10 {
 		b.r.MoveFocus(key.FocusForward)
 	}
 	b.r.ClickFocus()
@@ -510,5 +510,38 @@ func TestSprungZuEntdecken(t *testing.T) {
 	b.bild()
 	if b.u.reiter != reiterEntdecken {
 		t.Fatal("zweiter Link springt nicht")
+	}
+}
+
+// Ein Schalter der Benachrichtigungen schickt Art und neuen Wert an die
+// Instanz und springt danach nicht auf den alten Stand zurück.
+func TestBenachrichtigungSchalter(t *testing.T) {
+	jetzt := time.Date(2026, 11, 23, 15, 30, 0, 0, time.Local)
+	z := beispielZustand(jetzt, false, false)
+	b := neuerBedienTest(t, schnappschuss{verb: verbunden, runde: 1, z: z}, reiterHosten)
+	b.bild()
+	b.u.hosten.liste.Position.First = 2 // die Karte „Benachrichtigungen“ (die Liste zeichnet nur Sichtbares)
+	b.bild()
+	sw := b.u.hosten.benach["spieler"]
+	if sw == nil || sw.Value {
+		t.Fatalf("Schalter „spieler“ fehlt oder ist an: %+v", sw)
+	}
+	for i := 0; i < 80 && !b.r.Source().Focused(sw); i++ {
+		b.r.MoveFocus(key.FocusForward)
+	}
+	if !b.r.Source().Focused(sw) {
+		t.Fatal("Fokus erreicht den Schalter nicht")
+	}
+	b.r.ClickFocus()
+	b.bild()
+	got := b.warte(1)
+	if len(got) != 1 || got[0] != `benachrichtigung {"an":true,"art":"spieler"}` {
+		t.Fatalf("Aktionen: %q", got)
+	}
+	for range 3 {
+		b.bild() // der Zustand zeigt noch „aus“
+	}
+	if !b.u.hosten.benach["spieler"].Value {
+		t.Error("Schalter sprang auf den alten Stand zurück")
 	}
 }

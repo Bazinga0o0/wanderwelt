@@ -60,6 +60,7 @@ const (
 	reiterLog
 	reiterStatistik // hinten angehängt (Reihenfolge der Reiter bleibt sonst)
 	reiterZustand   // nur Admins (zustand.go)
+	reiterServer    // nur Admins (server.go)
 	anzahlReiter
 )
 
@@ -132,6 +133,9 @@ type schnappschuss struct {
 
 	// Zustand: Gesundheit des Koordinators (nur Admins, zustand.go).
 	gesundheit gesundheitDaten
+
+	// Server: Whitelist, Ops, Banns und Spielregeln (nur Admins, server.go).
+	server serverDaten
 }
 
 // daten hält Verbindung und Schnappschuss.
@@ -485,6 +489,7 @@ func (d *daten) runde(ctx context.Context) {
 	}
 
 	d.gesundheitRunde(ctx, c, r, admin)
+	d.serverRunde(ctx, c, r, admin)
 
 	d.mu.Lock()
 	geaendert := !gleich(alt, d.s)
@@ -535,6 +540,7 @@ func gleich(a, b schnappschuss) bool {
 	a.statistikAb, b.statistikAb = time.Time{}, time.Time{}
 	a.entdeckenAb, b.entdeckenAb = time.Time{}, time.Time{}
 	a.gesundheit.ab, b.gesundheit.ab = time.Time{}, time.Time{}
+	a.server.ab, b.server.ab = time.Time{}, time.Time{}
 	return reflect.DeepEqual(a, b)
 }
 

@@ -35,6 +35,7 @@ import (
 	"time"
 
 	"github.com/Bazinga0o0/wanderwelt/internal/api"
+	"github.com/Bazinga0o0/wanderwelt/internal/koord/benachrichtigung"
 	"github.com/Bazinga0o0/wanderwelt/internal/koord/config"
 	"github.com/Bazinga0o0/wanderwelt/internal/koord/lease"
 	"github.com/Bazinga0o0/wanderwelt/internal/koord/portholder"
@@ -122,6 +123,8 @@ type Server struct {
 	joins       config.JoinEntries
 	roles       config.Roles
 	names       config.Names
+	// lists: Gäste und Banns des Reiters „Server“ (serverlisten.go).
+	lists config.ServerLists
 	// corrupt: Überlagerungen (Pfad), die beim letzten Lesen kaputt waren.
 	// Sie gelten nicht, bleiben aber liegen, bis die nächste Änderung sie
 	// beiseitelegt (Kopie .kaputt-<Zeit>).
@@ -189,6 +192,14 @@ type Server struct {
 	stats *stats.Tracker
 	// health: Laufzeit-Merker der Gesundheit (health.go).
 	health healthState
+	// benach: Benachrichtigungen an Discord (nil: kein Webhook eingetragen).
+	// Gesetzt nur in New (und in Tests).
+	benach *benachrichtigung.Dienst
+
+	// jobs: Aufträge an den Host aus dem Reiter „Server“ (auftraege.go);
+	// jobPoll: so lange hält ein Abruf des Hosts (Tests verkürzen ihn).
+	jobs    *jobQueue
+	jobPoll time.Duration
 }
 
 // New baut den Server. Im Dev-Modus warnt er, weil dann jeder, der den
@@ -215,6 +226,8 @@ func New(cfg *config.Config, lm *lease.Manager, st *store.Store, ph portholder.C
 		hoDirty:     map[int]bool{},
 		presence:    map[string]presenceEntry{},
 		hoSeq:       time.Now().UnixNano(),
+		jobs:        newJobQueue(),
+		jobPoll:     jobPoll,
 	}
 	// Nach dem Start ist unbekannt, was auf den Ersatz-Ports liegt: der
 	// erste Takt räumt sie.
@@ -229,6 +242,12 @@ func New(cfg *config.Config, lm *lease.Manager, st *store.Store, ph portholder.C
 	s.loadHo()
 	s.openStats()
 	s.initHealth()
+	if cfg.DiscordWebhook.Gesetzt() {
+		s.benach = benachrichtigung.Neu(benachrichtigung.Optionen{
+			Webhook: cfg.DiscordWebhook, Gruppe: cfg.Gruppe.Titel, Arten: cfg.DiscordArten, Log: s.log,
+		})
+		s.log.Info("Discord-Benachrichtigungen sind an") // nie die Adresse
+	}
 
 	s.mux.HandleFunc("GET /v1/me", s.handleMe)
 	s.mux.HandleFunc("GET /v1/status", s.handleStatus)
@@ -260,6 +279,7 @@ func New(cfg *config.Config, lm *lease.Manager, st *store.Store, ph portholder.C
 	s.mux.HandleFunc("POST /v1/me/minecraft", s.handleSetMyMinecraft)
 	s.mux.HandleFunc("PUT /v1/storage/budget", s.handleSetBudget)
 	s.mux.HandleFunc("POST /v1/speedtest", s.handleSpeedTest)
+	s.mux.HandleFunc("GET /v1/ping", s.handlePing)
 	s.mux.HandleFunc("POST /v1/join", s.handleJoin)
 	s.mux.HandleFunc("GET /v1/join", s.handleJoinStatus)
 	s.mux.HandleFunc("GET /v1/info", s.handleInfo)
@@ -271,6 +291,13 @@ func New(cfg *config.Config, lm *lease.Manager, st *store.Store, ph portholder.C
 	s.mux.HandleFunc("POST /v1/worlds", s.handleWorldCreate)
 	s.mux.HandleFunc("PATCH /v1/worlds/{id}", s.handleWorldPatch)
 	s.mux.HandleFunc("DELETE /v1/worlds/{id}", s.handleWorldDelete)
+	s.mux.HandleFunc("GET /v1/server/lists", s.handleServerLists)
+	s.mux.HandleFunc("POST /v1/server/lists", s.handleServerListChange)
+	s.mux.HandleFunc("GET /v1/server/gamerules", s.handleGamerules)
+	s.mux.HandleFunc("POST /v1/server/gamerules", s.handleGameruleSet)
+	s.mux.HandleFunc("POST /v1/server/command", s.handleServerCommand)
+	s.mux.HandleFunc("POST /v1/host/jobs", s.handleHostJobs)
+	s.mux.HandleFunc("POST /v1/host/jobs/result", s.handleHostJobResult)
 	s.mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "unbekannter Endpunkt "+r.Method+" "+r.URL.Path)
 	})
@@ -300,6 +327,22 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // abgelaufenen Zuschlag, wird es danach angewandt.
 func (s *Server) ExpireTick(ctx context.Context) {
 	s.stats.Tick(s.now())
+	s.expireTick(ctx)
+	// Nach dem Takt (ohne phMu): Veränderungen an Discord melden.
+	if s.benach != nil {
+		s.benach.Beobachte(s.statusNow(), s.now())
+	}
+}
+
+// RunBenachrichtigung stellt Discord-Nachrichten zu, bis ctx endet (blockiert;
+// in eigener Goroutine aufrufen). Ohne Webhook kehrt es sofort zurück.
+func (s *Server) RunBenachrichtigung(ctx context.Context) {
+	if s.benach != nil {
+		s.benach.Lauf(ctx)
+	}
+}
+
+func (s *Server) expireTick(ctx context.Context) {
 	s.phMu.Lock()
 	defer s.phMu.Unlock()
 	s.wartungTickLocked(ctx)
@@ -312,6 +355,8 @@ func (s *Server) ExpireTick(ctx context.Context) {
 		s.clearLocked(ctx)
 	}
 	s.settleRestoreLocked(ctx)
+	// Aufträge eines Zuschlags, der nicht mehr (bereit) hostet, verfallen.
+	s.jobs.dropExcept(s.currentLease())
 }
 
 // PruneTick wendet Aufbewahrung und Aufräumlauf des Speichers an.
@@ -498,6 +543,11 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.statusNow())
+}
+
+// statusNow ist der Status für Starter, Fenster und die Benachrichtigungen.
+func (s *Server) statusNow() api.Status {
 	running := s.runningWorld()
 	worldID, head, created := s.st.HeadInfoOf(cmp.Or(running, s.normWorld("")))
 	st := api.Status{
@@ -521,7 +571,8 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		st.HostReady = info.Ready && !info.UploadOnly
 		st.HostUploading = info.UploadOnly
 	}
-	writeJSON(w, http.StatusOK, st)
+	st.DiscordChannel = s.benach != nil
+	return st
 }
 
 // handleManifest liefert das beim Start oder letzten Neuladen gelesene und
@@ -1102,6 +1153,8 @@ func (s *Server) handleHostSettings(w http.ResponseWriter, r *http.Request) {
 			hs.Ops = append(hs.Ops, p)
 		}
 	}
+	// Gäste und Banns des Reiters „Server“.
+	s.addListsToSettings(&hs)
 	writeJSON(w, http.StatusOK, hs)
 }
 
@@ -1460,6 +1513,14 @@ func (s *Server) handleSpeedTest(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handlePing beantwortet GET /v1/ping leer (204): Zeitmessung des Starters
+// für die Host-Wahl (Score.PingMs). Keine Daten, keine Sperren. Dass der
+// Endpunkt da ist, zeigt dem Starter zugleich, dass der Koordinator
+// ping_ms kennt.
+func (s *Server) handlePing(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 

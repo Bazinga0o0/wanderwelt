@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -689,10 +690,14 @@ func joinGrant(h *hostState) Grant {
 // Es zählen nur Kandidaten mit gemessenem Upload ≥ MinUploadMbps (30 Mbit/s),
 // mindestens MinRAMTotalMB (14 GiB) gesamtem RAM (ein „16-GB-PC“; ist der Gesamt-RAM
 // unbekannt, zählt der freie) und freiem RAM ≥ Xmx + 1024 MB; erfüllt das
-// niemand, zählen alle. Score = 0,2·Upload + 0,4·CPU + 0,4·freier RAM:
+// niemand, zählen alle. Score = 0,15·Upload + 0,30·CPU + 0,30·freier RAM
+// + 0,25·Ping (Gewichte: WeightUpload, WeightCPU, WeightRAM, WeightPing):
 //   - Upload zählt absolut bis MaxUploadMbps (100 Mbit/s), mehr bringt nichts,
 //   - freier RAM zählt absolut bis MaxRAMMB (64 GB), mehr bringt nichts,
-//   - CPU wird durch das Maximum unter den zählenden Kandidaten geteilt.
+//   - CPU wird durch das Maximum unter den zählenden Kandidaten geteilt,
+//   - Ping (Round-Trip Host-PC ↔ Koordinator, siehe PingScore) zählt 1,0 bis
+//     PingGoodMs (20 ms), 0,0 ab PingBadMs (200 ms), dazwischen linear; fehlt
+//     er, gilt PingNeutral (0,5). Er ist kein Mindestkriterium.
 //
 // Bei Gleichstand gewinnt der frühere Index.
 func Best(cands []Candidate) int {
@@ -719,15 +724,42 @@ func Best(cands []Candidate) int {
 	best, bestScore := -1, 0.0
 	for _, i := range pool {
 		s := cands[i].Score
-		score := 0.2*norm(min(s.UploadMbps, MaxUploadMbps), MaxUploadMbps) +
-			0.4*norm(s.CPUScore, maxCPU) +
-			0.4*norm(float64(min(s.RAMFreeMB, MaxRAMMB)), MaxRAMMB)
+		score := WeightUpload*norm(min(s.UploadMbps, MaxUploadMbps), MaxUploadMbps) +
+			WeightCPU*norm(s.CPUScore, maxCPU) +
+			WeightRAM*norm(float64(min(s.RAMFreeMB, MaxRAMMB)), MaxRAMMB) +
+			WeightPing*PingScore(s.PingMs)
 		if best < 0 || score > bestScore {
 			best, bestScore = i, score
 		}
 	}
 	return best
 }
+
+// PingScore bewertet die Latenz (Round-Trip Host-PC ↔ Koordinator) mit 0…1:
+// bis PingGoodMs 1,0, ab PingBadMs 0,0, dazwischen linear. Fehlt der Wert
+// (pingMs ≤ 0: ältere Starter, Messung gescheitert), gilt PingNeutral.
+func PingScore(pingMs float64) float64 {
+	if pingMs <= 0 || math.IsNaN(pingMs) {
+		return PingNeutral
+	}
+	return math.Min(1, math.Max(0, (PingBadMs-pingMs)/(PingBadMs-PingGoodMs)))
+}
+
+// Gewichte der Host-Wahl (Summe 1; siehe Best). Leicht änderbar; dann auch die
+// Beschreibung der Host-Wahl im README anpassen.
+const (
+	WeightUpload = 0.15
+	WeightCPU    = 0.30
+	WeightRAM    = 0.30
+	WeightPing   = 0.25
+)
+
+// Bewertung des Pings (siehe PingScore).
+const (
+	PingGoodMs  = 20.0
+	PingBadMs   = 200.0
+	PingNeutral = 0.5
+)
 
 // Grenzen der Host-Wahl (siehe Best).
 const (

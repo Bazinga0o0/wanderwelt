@@ -51,6 +51,10 @@ func IsJoinLinkArg(arg string) bool {
 	return len(arg) >= len(JoinScheme)+1 && strings.EqualFold(arg[:len(JoinScheme)+1], JoinScheme+":")
 }
 
+// msgGruppencodeErklaerung erscheint vor dem Eingabefenster für den Gruppencode.
+const msgGruppencodeErklaerung = "Füge den Gruppencode ein, den du von einem Mitspieler oder dem Admin bekommen hast.\n\n" +
+	"Hast du stattdessen eine Gruppendatei vom Admin, wähle im Eingabefenster „Gruppendatei wählen“."
+
 // Im Test austauschbar.
 var (
 	openWindowOnJoin = openWindow
@@ -69,12 +73,14 @@ var (
 				return "", zenity.ErrExtraButton
 			}
 		}
-		text := "Willkommen bei wanderwelt!\n\nFüge den Gruppencode ein, den du von einem Mitspieler oder dem Admin bekommen hast."
-		if hint != "" {
-			text = hint + "\n\n" + text
+		// Die Erklärung kommt einmal als Meldungsfenster (nach der Wahl im
+		// Menü), ein Hinweis zur letzten Eingabe an ihrer Stelle; das
+		// Eingabefenster hat nur eine kurze Zeile.
+		meldung := hint
+		if hint == "" {
+			meldung = msgGruppencodeErklaerung
 		}
-		text += "\n\nHast du stattdessen eine Gruppendatei vom Admin, wähle „Gruppendatei wählen“."
-		return zenity.Entry(text, zenity.Title("wanderwelt einrichten"), windowIcon(),
+		return eingabeMitMeldung(meldung, labelGruppencode, zenity.Title(titelWillkommen), windowIcon(),
 			zenity.OKLabel("Weiter"), zenity.CancelLabel("Abbrechen"), zenity.ExtraButton("Gruppendatei wählen"))
 	}
 	// confirmJoin zeigt die Adressen und fragt ausdrücklich.

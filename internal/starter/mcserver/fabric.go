@@ -112,12 +112,20 @@ func (f *fabric) Prepare(ctx context.Context, in PrepareInput) error {
 	if err != nil {
 		return fmt.Errorf("mcserver: Ops: %w", err)
 	}
+	// Banns stehen maßgeblich beim Koordinator; die Datei wird bei jedem
+	// Start ganz neu geschrieben (ohne Banns: leer), damit hier nie ein
+	// veralteter Bann übrig bleibt.
+	bans, err := bansJSON(in.Settings.Bans, time.Now())
+	if err != nil {
+		return fmt.Errorf("mcserver: Banns: %w", err)
+	}
 	files := []struct {
 		name string
 		data []byte
 	}{
 		{"whitelist.json", wl},
 		{"ops.json", ops},
+		{"banned-players.json", bans},
 		{"eula.txt", []byte("# Zustimmung zur Minecraft-EULA (https://aka.ms/MinecraftEULA) im wanderwelt-Starter\neula=true\n")},
 	}
 	for _, fl := range files {
@@ -358,6 +366,33 @@ func opsJSON(players []api.Player) ([]byte, error) {
 	list := make([]opEntry, 0, len(ps))
 	for _, p := range ps {
 		list = append(list, opEntry{UUID: p.UUID, Name: p.Name, Level: opLevel})
+	}
+	return marshalList(list)
+}
+
+// banEntry ist ein Eintrag von banned-players.json (Format von 26.2).
+type banEntry struct {
+	UUID    string `json:"uuid"`
+	Name    string `json:"name"`
+	Created string `json:"created"`
+	Source  string `json:"source"`
+	Expires string `json:"expires"`
+	Reason  string `json:"reason"`
+}
+
+// BanReason ist der Grund jedes Banns (fest, damit kein freier Text in
+// Befehle gelangt).
+const BanReason = "Von einem Admin gebannt."
+
+func bansJSON(players []api.Player, now time.Time) ([]byte, error) {
+	ps, err := checkPlayers(players)
+	if err != nil {
+		return nil, err
+	}
+	created := now.Format("2006-01-02 15:04:05 -0700")
+	list := make([]banEntry, 0, len(ps))
+	for _, p := range ps {
+		list = append(list, banEntry{UUID: p.UUID, Name: p.Name, Created: created, Source: "wanderwelt", Expires: "forever", Reason: BanReason})
 	}
 	return marshalList(list)
 }

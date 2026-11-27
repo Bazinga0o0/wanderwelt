@@ -283,7 +283,7 @@ const depsProgressMax = 1000
 // openDepsProgress öffnet das Fortschrittsfenster der Einrichtung; im Test
 // austauschbar.
 var openDepsProgress = func() (zenity.ProgressDialog, error) {
-	return zenity.Progress(
+	return oeffneFortschritt(
 		zenity.Title("wanderwelt einrichten"), windowIcon(),
 		zenity.MaxValue(depsProgressMax),
 		zenity.CancelLabel("Abbrechen"))
@@ -306,7 +306,7 @@ func ensureDepsDialog(ctx context.Context, c *client.Client, m *api.Manifest, pr
 		dlg = nil
 	}
 	if dlg != nil {
-		dlg.Text("Prüfe Java, Fabric-Server, Mods und tunnel …")
+		setzeFortschrittText(dlg, textPruefeDeps)
 		go func() {
 			select {
 			case <-dlg.Done():
@@ -370,11 +370,12 @@ func (p *depsProgress) report(name string, done, total int64) {
 	if p.dlg == nil {
 		return
 	}
+	// Der Name wird gekürzt, nicht die Größe dahinter (eine Zeile, dialoge.go).
+	size := done
 	if total > 0 {
-		p.dlg.Text(fmt.Sprintf("Lade %s (%s) …", name, humanSize(total)))
-	} else {
-		p.dlg.Text(fmt.Sprintf("Lade %s (%s) …", name, humanSize(done)))
+		size = total
 	}
+	setzeFortschrittText(p.dlg, zeileMitName("Lade ", name, fmt.Sprintf(" (%s) …", humanSize(size)), maxZeile))
 	i, ok := p.index[name]
 	if !ok || p.max <= 1 {
 		return

@@ -190,6 +190,7 @@ func TestFensterAPIToken(t *testing.T) {
 		{"POST", "/v1/speicher", `{"budget_bytes":21474836480}`},
 		{"POST", "/v1/rolle", `{"email":"bob@example.org","admin":true,"op":true}`},
 		{"POST", "/v1/logordner", ""},
+		{"POST", "/v1/fehlerbericht", ""},
 	}
 	port := strings.TrimPrefix(ft.host, "127.0.0.1:")
 	cases := []struct{ name, host, auth string }{

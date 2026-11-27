@@ -57,13 +57,13 @@ func TestCopySelfReplacesFileInUse(t *testing.T) {
 	}
 	dir := t.TempDir()
 	src, dst := filepath.Join(dir, "neu.exe"), filepath.Join(dir, "home", ExeName)
-	if err := os.WriteFile(src, []byte("NEU"), 0o755); err != nil {
+	if err := os.WriteFile(src, []byte("MZ NEU"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(dst, []byte("ALT"), 0o755); err != nil {
+	if err := os.WriteFile(dst, []byte("MZ ALT"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	f, err := os.Open(dst)
@@ -80,7 +80,7 @@ func TestCopySelfReplacesFileInUse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("copySelf: %v", err)
 	}
-	if b, _ := os.ReadFile(dst); string(b) != "NEU" {
+	if b, _ := os.ReadFile(dst); string(b) != "MZ NEU" {
 		t.Fatalf("installiert: %q", b)
 	}
 	if left, _ := filepath.Glob(filepath.Join(filepath.Dir(dst), "*.tmp")); len(left) != 0 {
@@ -134,7 +134,7 @@ func TestCopySelfReplacesRunningExe(t *testing.T) {
 	}
 
 	src := filepath.Join(t.TempDir(), "neu.exe")
-	if err := os.WriteFile(src, []byte("NEU"), 0o755); err != nil {
+	if err := os.WriteFile(src, []byte("MZ NEU"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	start := time.Now()
@@ -144,10 +144,10 @@ func TestCopySelfReplacesRunningExe(t *testing.T) {
 	if d := time.Since(start); d > 5*time.Second {
 		t.Errorf("copySelf brauchte %v", d)
 	}
-	if b, _ := os.ReadFile(dst); string(b) != "NEU" {
+	if b, _ := os.ReadFile(dst); string(b) != "MZ NEU" {
 		t.Fatalf("installiert: %.10q", b)
 	}
-	olds, _ := filepath.Glob(filepath.Join(home, ExeName+oldCopyMark+"*"))
+	olds, _ := filepath.Glob(filepath.Join(home, ExeName+oldCopySuffix+"*"))
 	if len(olds) != 1 {
 		t.Fatalf("alte Kopien: %v", olds)
 	}

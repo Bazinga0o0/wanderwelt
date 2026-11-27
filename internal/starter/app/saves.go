@@ -37,6 +37,19 @@ type SaveInfo struct {
 	Err error
 }
 
+// ListenLabel ist die kurze Zeile im Listenfenster („Name · Version · Größe“,
+// der Name wird nötigenfalls gekürzt; der Eintrag hat höchstens maxEintrag
+// Zeichen).
+func (s SaveInfo) ListenLabel() string {
+	version := s.Version
+	if s.Err != nil {
+		version = "unlesbar"
+	} else if version == "" {
+		version = "Version unbekannt"
+	}
+	return zeileMitName("", s.Folder, " · "+version+" · "+humanSize(s.Size), maxEintrag)
+}
+
 // Label ist die Zeile in der Auswahlliste.
 func (s SaveInfo) Label() string {
 	version := s.Version

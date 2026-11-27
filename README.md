@@ -31,8 +31,12 @@ Du brauchst:
 - deine Gruppendatei vom Admin (etwa gruppe-anna.yaml). Sie ist dein
   Zugang, gib sie nicht weiter. (Hat dir der Admin eine wanderwelt.exe
   für deine Gruppe gegeben, brauchst du keine Gruppendatei: Die
-  Einrichtung führt dich zur Webseite, wo du ein Konto anlegst und einen
-  Token erstellst, den du dann einfügst. Danach stellt sie eine
+  Einrichtung führt dich zur Webseite, wo du ein Konto anlegst, deine E-Mail
+  bestätigst (Link in der Mail), auf die Freischaltung durch einen Admin wartest
+  und dann unter „API Tokens“ einen Token erstellst (Name eingeben, „Create
+  token“; es gibt nur diese Art von Token), den du dann einfügst. Gleiches gilt,
+  wenn du ohne Gruppencode einrichtest („Entdecken“): nach der Server-Adresse
+  öffnet die Einrichtung auf Wunsch die Webseite für dich. Danach stellt sie eine
   Beitrittsanfrage und wartet, bis ein Admin dich annimmt.)
 
 Java und den Minecraft-Server lädt wanderwelt selbst.
@@ -102,7 +106,8 @@ Speicher mehr; wanderwelt läuft im Infobereich weiter.
   Gruppenwelt. Admins sehen bei jedem Stand „Zurückholen“ und das
   Speicherbudget („Budget ändern“).
 - **Hosten**: Arbeitsspeicher und Sichtweite des Servers auf diesem PC, C2ME,
-  Autostart mit Windows, Dauerbetrieb und „Darf das Hosten übernehmen“. Die
+  Autostart mit Windows, Dauerbetrieb und „Darf das Hosten übernehmen“, dazu
+  die Schalter der [Benachrichtigungen](#benachrichtigungen). Die
   Leistungswerte gelten ab dem nächsten Serverstart; „Darf das Hosten
   übernehmen“ gilt sofort, auch während du mitspielst.
 - **Entdecken**: Gruppen, die der Tunnel-Server deiner Gruppen auflistet
@@ -116,7 +121,8 @@ Speicher mehr; wanderwelt läuft im Infobereich weiter.
   wer gerade online ist. Mitglieder anlegen oder entfernen macht der Admin auf
   dem Server, nicht im Fenster.
 - **Log**: die letzten Zeilen des Logs, folgt automatisch; „Log-Ordner öffnen“
-  zeigt den Ordner.
+  zeigt den Ordner, „Fehlerbericht erstellen“ packt die Logs für den Admin
+  (siehe „Fehlerbericht und Logs der Welt“).
 - **Statistik** (jedes Mitglied): je Mitglied die Spielzeit (Zeit auf dem
   Server), die Hostzeit (Zeit, in der er den Server bereitgestellt hat), die
   Zahl der Host-Sitzungen und sein Anteil an der gesamten Hostzeit als Balken
@@ -135,6 +141,46 @@ Speicher mehr; wanderwelt läuft im Infobereich weiter.
   zuletzt gesehenen PCs, offenen Beitrittsanfragen, Wartung, letzter Sicherung
   und dem letzten Aufräumen. Der Reiter aktualisiert sich alle 30 s, solange er
   offen ist. Ein älterer Koordinator ohne `GET /v1/health` zeigt „zu alt“.
+
+### Benachrichtigungen
+
+wanderwelt kann dir Bescheid sagen, was in der Gruppe passiert, auch wenn das
+Fenster zu ist. Es gibt zwei Wege: Windows-Hinweise auf deinem PC (du stellst
+sie selbst ein) und, wenn euer Admin es eingerichtet hat, einen Discord-Kanal
+für die ganze Gruppe.
+
+**Windows-Hinweise** stellst du im Fenster auf dem Reiter **Hosten** im Bereich
+„Benachrichtigungen“ ein, ein Schalter je Ereignis; sie gelten für diese
+Gruppe auf diesem PC (gespeichert in `benachrichtigungen.json` im Ordner der
+Gruppe). Standard:
+
+| Ereignis | Windows | Discord |
+| --- | --- | --- |
+| „X hostet jetzt – die Welt ist gleich bereit“ | an | an |
+| „Die Welt ist online (Host X)“ | an | an |
+| „A ist beigetreten / hat die Welt verlassen“ | aus | an |
+| „Niemand hostet mehr“ | aus | aus |
+| Wartung angekündigt / vorbei | an | an |
+| Host-Übergabe läuft / abgeschlossen | aus | an |
+| „Neue Beitrittsanfrage von Y“ (nur Admins) | an | gibt es nicht |
+
+Dein eigenes Hosten und dein eigener Beitritt melden die Hinweise nicht noch
+einmal (dazu zeigt wanderwelt ohnehin eigene Hinweise). Beitritte und Abgänge,
+die zusammenfallen, kommen in einer Meldung. Verglichen wird alle 30 Sekunden
+mit dem Stand des Koordinators: Beim Start von wanderwelt und nach einem
+Ausfall des Koordinators gibt es keine Hinweise zu dem, was vorher schon war.
+Ist das Fenster offen, erscheinen die Hinweise dort statt als Windows-Meldung.
+Im Bereich steht auch, ob die Gruppe einen **Discord-Kanal** hat („an“/„aus“);
+die Adresse des Kanals erfährt dein PC nie.
+
+Der **Discord-Kanal** ist ein Kanal eures Discord-Servers, in den der
+Koordinator kurze deutsche Texte schreibt (mit dem Titel der Gruppe, bei
+mehreren Welten auch dem Namen der Welt), etwa „Unsere Wandergruppe: Mara
+hostet jetzt – die Welt ist gleich bereit.“ Es stehen nur Minecraft-Namen
+darin, die in der Gruppe ohnehin sichtbar sind, nie E-Mail-Adressen, Adressen
+oder Standorte. Beitritte und Abgänge innerhalb von etwa 10 Sekunden stehen in
+einer Nachricht. Niemand wird je mit @everyone, @here oder einer Erwähnung
+angeschrieben.
 
 ### Mehrere Gruppen
 
@@ -240,6 +286,44 @@ installieren.
   - Eine ältere Mod-Version ohne den Schlüssel `aktiv` ignoriert „Aus“: Die
     Jar im Manifest muss mindestens 1.1.0 sein.
 
+### Fehlerbericht und Logs der Welt
+
+Zwei Hilfen, damit sich Fehler leichter finden lassen. Beide säubern vorher
+alles, was geheim sein könnte (Tokens, Passwörter, RCON-Passwort, Webhook-
+Adressen, Zugangsdaten in Adressen, Gruppencodes, IP-Adressen von Spielern; den
+Windows-Benutzernamen in Pfaden ersetzt `%USERPROFILE%`).
+
+- **Fehlerbericht erstellen** (Reiter **Log** im Fenster oder Rechtsklick auf
+  das Symbol): packt ein Zip `wanderwelt-fehlerbericht-<Datum-Zeit>.zip` nach
+  **Downloads** und öffnet den Ordner. Es entsteht nur auf deinem PC, nichts
+  wird hochgeladen; du gibst es weiter, wem du willst. Inhalt: Log des Starters
+  von heute und gestern, Log des Servers (`wanderwelt-server.log`,
+  `latest.log`, je die letzten 2 MiB), Version, Windows und Hardware-Kurzinfo,
+  Zustand (Phase, Fehler, Status), Manifest-Version und Mods sowie die mit der
+  Welt gewanderten Logs der früheren Hosts. **Nicht** dabei: Weltdaten,
+  Spielerdateien, Gruppendatei. Der Serverlog kann Spielernamen und Chat
+  enthalten – bitte vor dem Weitergeben ansehen.
+- **Logs wandern mit der Welt:** Beim Erzeugen jedes Stands legt der Host die
+  wanderwelt-Zeilen des Tages (Host, Server, Stände, Zuschlag, Übergabe,
+  Wartung, Fortsetzen, Selbst-Update, Fehler; **nicht** den Minecraft-Serverlog,
+  nicht den Chat, nicht Beitritte zur Gruppe) in
+  `world/wanderwelt-logs/<JJJJ-MM-TT>-<Kurzname>.log`. Der nächste Host bekommt
+  sie mit dem Stand, der Fehlerbericht legt sie bei, und ein Admin kann sie im
+  Weltordner lesen. Der Kurzname sind 6 Zeichen eines Hashes aus der
+  PC-Kennung, nie der Rechnername.
+- **Datenschutz – bitte alle Mitglieder wissen lassen:** In den Logs stehen
+  Zeitpunkte und Vorgänge des Servers (wer wann gehostet hat, Stände, Fehler)
+  und können Spielernamen vorkommen, etwa bei einer Host-Übergabe an einen
+  Mitspieler oder wenn ein Vorgang namentlich genannt wird. Sehen kann sie
+  jeder Host, der die Welt hostet (sie liegen im Weltordner auf seinem PC),
+  und der Betreiber des Koordinators über die Stände. Grenzen: je Datei
+  höchstens 256 KiB, im Ordner insgesamt höchstens 1 MiB, Dateien älter als
+  3 Tage werden beim nächsten Stand gelöscht (die älteste Zeile geht zuerst).
+  Mit „Stände zurückholen“ gehen auch die Logs auf den alten Stand zurück. Ein
+  Admin kann den Ordner `wanderwelt-logs` von Hand löschen und die Welt neu
+  speichern; schon erzeugte Stände auf dem Koordinator behalten ihn bis zum
+  Ablauf der Aufbewahrung.
+
 ### Rollen
 
 - **Mitglied**: spielen und hosten.
@@ -251,6 +335,46 @@ installieren.
 
 Admin- und Op-Schalter wirken live: Ein laufender Server gleicht sich danach
 an. Das letzte Admin-Mitglied kann sich das Admin-Recht nicht selbst nehmen.
+
+### Server-Einstellungen (Reiter „Server“, nur Admins)
+
+Statt einer Konsole verwaltet ein Admin im Reiter „Server“:
+
+- **Whitelist**: Mitglieder stehen immer darauf (hinzufügen/entfernen nur
+  über die Mitgliederliste). Zusätzlich lassen sich **Gäste** eintragen –
+  Spieler ohne Mitgliedschaft, die mitspielen dürfen, wenn jemand hostet.
+- **Ops**: Op wird nur, wer auf der Whitelist steht. Für Mitglieder ist es
+  dasselbe Op-Recht wie im Reiter „Mitglieder“.
+- **Banns**: Gebannte kommen nie herein, auch Mitglieder nicht (sie bleiben
+  Mitglied). Ein gebannter Gast fällt von Whitelist und Ops. Sich selbst
+  bannen geht nicht.
+- **Spielregeln** (`gamerule`): Liste der laufenden Welt laden und je Zeile
+  ändern (Schalter oder Zahl + „Setzen“). Sie gehören zur Welt und wandern
+  mit dem Stand; ändern geht nur, solange die Welt läuft.
+- **Befehl senden**: ein Minecraft-Befehl an den laufenden Server, die
+  Antwort steht darunter.
+
+Jede Zeile wirkt sofort. Läuft die Welt, übernimmt der Server Änderungen an
+den Listen in wenigen Sekunden; sonst heißt es „Läuft gerade nicht –
+gespeichert für den nächsten Start“. Namen: 3 bis 16 Buchstaben, Ziffern oder
+`_`; der Koordinator prüft sie bei Mojang.
+
+Nicht erlaubt sind Befehle, die Speichern, Stände oder die Übergabe stören
+(`stop`, `save-all`, `save-off`, `save-on`, `reload`, `tick`, `transfer`,
+`datapack`), Dateien am Host schreiben (`debug`, `perf`, `jfr`, `test`), ins
+Netz gehen (`fetchprofile`), die Listen umgehen (`whitelist`, `op`, `deop`,
+`ban`, `pardon`, IP-Banns) oder Einstellungen des Reiters „Welt“ betreffen
+(`difficulty`, `defaultgamemode`, `setidletimeout`); Befehle von Mods gehen
+gar nicht. Auch hinter `execute … run` gilt das.
+
+**Datenschutz und Sicherheit:** Jeder Befehl, jede Spielregel und jede
+Listenänderung steht mit E-Mail und Minecraft-Name des Admins und der Zeit im
+Log des Koordinators (auf dem Server). Die Listen (Gäste, Banns mit
+Minecraft-Name, UUID, wer und wann) liegen in `serverlisten.json` beim
+Koordinator. Befehle laufen nur im Minecraft-Server des aktuellen Hosts
+(über RCON, nur lokal), nie als Programm auf dessen PC. Wer Admin ist, kann
+damit im Spiel viel ändern (Inventare, Welt, Spieler) – Admin-Recht nur an
+Vertraute geben.
 
 ### Stände zurückholen (nur Admins)
 
@@ -276,8 +400,8 @@ Stände: Die Welt wird während des Spielens regelmäßig gesichert (standardmä
 alle 5 Minuten). Die letzten Stände bleiben erhalten, dazu je Stunde und Tag
 einer der älteren.
 
-Probleme: Rechtsklick auf das Symbol, „Log öffnen“, und das Log dem Admin
-schicken.
+Probleme: Rechtsklick auf das Symbol, „Fehlerbericht erstellen“, und das Zip
+aus Downloads dem Admin schicken (siehe „Fehlerbericht und Logs der Welt“).
 
 ## Releases
 
@@ -697,8 +821,10 @@ wanderwelt-koordinator wartung ende
   60 s lang „Beginn in …“ (`resume`, Verfall nach 10 min, gespeichert in
   `wartung-fortsetzen.json`); alle Starter mit Merker bereiten ihre Bewerbung
   vor und bewerben sich zum Beginn gemeinsam wie bei „Spielen“. Das
-  gewöhnliche Sammelfenster wählt den besten PC (Upload 20 %, CPU 40 %, RAM 40 %; Mindestwerte:
-  Upload 30 Mbit/s, 16-GB-PC mit genug freiem RAM; Upload über 100 Mbit/s und RAM über 64 GB zählen nicht mehr); er holt den Stand und hostet wie sonst, die anderen bekommen den
+  gewöhnliche Sammelfenster wählt den besten PC (Upload 15 %, CPU 30 %, RAM 30 %, Ping 25 %; Mindestwerte:
+  Upload 30 Mbit/s, 16-GB-PC mit genug freiem RAM; Upload über 100 Mbit/s und RAM über 64 GB zählen nicht mehr;
+  der Ping – Median von 7 Round-Trips zum Koordinator – zählt 1,0 bis 20 ms und 0,0 ab 200 ms, dazwischen linear,
+  fehlt er (ältere Starter), gilt er neutral als 0,5; kein Mindestwert für den Ping); er holt den Stand und hostet wie sonst, die anderen bekommen den
   Beitrittshinweis (ohne den Launcher von selbst zu öffnen). Es entfällt,
   wenn schon jemand hostet, die Wartung wieder läuft, der Nutzer „Fortsetzen
   abbrechen“ (Tray, Reiter Start), „Spielen“ oder „Nicht mehr mitspielen“
@@ -749,6 +875,42 @@ Warnungen selbst (Paket `internal/koord/gesundheit`), jede mit Stufe `info`,
   älter als `starter:` im Manifest (Hinweis); offene Beitrittsanfragen
   (Hinweis); fehlgeschlagenes Aufräumen (Fehler); Speicher trotz Aufräumen über
   dem Budget (Warnung).
+
+### Reiter „Server“ (Koordinator)
+
+Endpunkte, alle nur für Admins (sonst 403):
+
+- `GET /v1/server/lists` – Whitelist (Mitglieder und Gäste), Ops, Banns,
+  `running`.
+- `POST /v1/server/lists` mit `{"list": "whitelist"|"ops"|"bans", "action":
+  "add"|"remove", "name": …}` – Antwort: deutscher Text und die Listen.
+- `GET /v1/server/gamerules`, `POST /v1/server/gamerules` (`{"name", "value"}`)
+  und `POST /v1/server/command` (`{"command"}`) – nur bei laufender Welt
+  (sonst 409); der Koordinator wartet bis 15 s auf den Host (sonst 504).
+
+Gäste und Banns stehen in `data_dir/serverlisten.json` (0600, atomar; eine
+kaputte Datei gilt nicht, die zuletzt gültigen Listen bleiben, Fehler im Log;
+`systemctl reload` liest sie neu). Zusammen mit den Mitgliedern und
+`roles.json` ist sie die einzige Wahrheit: Die Host-Einstellungen tragen
+Gäste in Whitelist/Ops und neu `bans`; der Host schreibt `whitelist.json`,
+`ops.json` und `banned-players.json` bei jedem Start neu und gleicht einen
+laufenden Server über `members_version` an (`pardon`, `whitelist add`, `op`,
+`deop`, `whitelist remove`+`kick`, `ban`).
+
+Befehle, Spielregeln und das Lesen der Spielregeln sind Aufträge im Speicher
+des Koordinators (höchstens 8 offen) für den Haupt-Zuschlag eines bereiten
+Hosts. Der Host holt sie per Long-Poll (`POST /v1/host/jobs`, bis 20 s) und
+meldet das Ergebnis (`POST /v1/host/jobs/result`); beide nur mit gültigem
+Zuschlag und PC des Hosts. Der Befehlsfilter (`internal/serverbefehl`,
+Positivliste der Vanilla-Befehle von 26.2, höchstens 256 Bytes, keine
+Steuerzeichen) läuft im Koordinator und noch einmal beim Host; der Host führt
+Aufträge über eine eigene, kurzlebige RCON-Verbindung aus, Antworten werden auf
+4 KiB gekürzt. Log-Zeilen: `Admin-Befehl`, `Admin-Befehl abgelehnt`,
+`Spielregel ändern`, `Serverliste geändert` / `nicht geändert`.
+
+Ausrollen: erst der Koordinator, dann die Starter. Ein älterer Starter als
+Host übernimmt Gäste, aber keine Banns (ein gebannter Gast fällt trotzdem von
+der Whitelist) und keine Befehle (die Aufträge laufen dann nach 15 s ab).
 
 ### Host-Übergabe
 
@@ -1306,6 +1468,75 @@ nimmt den Spieler ohne Neustart in die Whitelist auf. Die tunnel-Freischaltung
 des Kontos bleibt Sache des Admins im tunneld-Admin-Panel. Anfragen und
 angenommene Mitglieder überstehen einen Neustart; beim Neuladen werden die
 Dateien neu gelesen.
+
+### Benachrichtigungen (Discord-Webhook)
+
+Der Koordinator kann Ereignisse der Gruppe in einen Discord-Kanal schreiben
+(Übersicht für Mitglieder: [Benachrichtigungen](#benachrichtigungen)). Das ist
+**standardmäßig aus** und wird vom Admin des Koordinators einmal eingerichtet:
+
+1. In Discord den Kanal öffnen, in den geschrieben werden soll: **Kanal →
+   Integrationen → Webhooks → Neuer Webhook**, Name und Bild nach Wunsch, dann
+   **„Webhook-URL kopieren“**. (Dazu brauchst du auf dem Discord-Server das
+   Recht „Webhooks verwalten“.) Die Adresse sieht so aus:
+   `https://discord.com/api/webhooks/<Nummer>/<langer Schlüssel>`.
+2. Auf dem Server in `/etc/wanderwelt/koordinator.yaml` eintragen (Beispiel:
+   `deploy/koordinator.example.yaml`):
+
+   ```yaml
+   discord_webhook: https://discord.com/api/webhooks/123456789012345678/xxxxxxxx   # Geheimnis!
+   # Optional: einzelne Ereignisse umstellen (true/false); fehlende gelten nach Standard.
+   discord_ereignisse:
+     spieler: true           # Beitritt/Verlassen (Standard an)
+     niemand_hostet: false   # Standard aus
+     # weitere: host_startet, welt_online, wartung, uebergabe (alle Standard an)
+   ```
+
+   Die Datei sollte nur für root und die Gruppe `wanderwelt` lesbar sein
+   (`chown root:wanderwelt`, `chmod 0640`).
+3. `systemctl restart wanderwelt-koordinator` (der Webhook gilt erst nach
+   einem Neustart, nicht schon nach `reload`). Eine ungültige Adresse verhindert
+   den Start mit einer Fehlermeldung (die Adresse selbst steht nie darin).
+
+**Die Webhook-Adresse ist ein Geheimnis:** Wer sie kennt, kann im Kanal als
+„wanderwelt“ schreiben. Gib sie nicht weiter, poste sie nicht in Chats oder
+Tickets und checke sie nicht in ein Repository ein. Der Koordinator schreibt
+sie nie in Log oder Fehlermeldungen, und weder Starter noch Fenster erfahren
+sie; sie sehen nur `discord_channel: true` im Status („Discord-Kanal der Gruppe:
+an“). Ist sie doch einmal bekannt geworden: in Discord den Webhook löschen und
+einen neuen anlegen, dann die Konfiguration ändern. Erlaubt sind nur Adressen
+von `discord.com`/`discordapp.com` (auch `ptb.`/`canary.`).
+
+Wie es sich verhält:
+
+- Der Koordinator vergleicht alle 5 Sekunden den Status. Nach einem Neustart
+  des Koordinators gibt es 30 Sekunden lang keine Nachrichten (Spielerliste
+  und „bereit“ kommen erst mit dem nächsten Lebenszeichen des Hosts zurück);
+  es werden also nur Änderungen nach dem Start gemeldet, nie eine Flut alter
+  Ereignisse.
+- Höchstens eine Nachricht alle 5 Sekunden, höchstens 20 warten (bei Überlauf
+  fallen die ältesten weg). Antwortet Discord mit 429 oder einem 5xx-Fehler,
+  wartet der Koordinator die Zeit aus `Retry-After` (höchstens 2 Minuten) und
+  versucht es bis zu dreimal. Der Koordinator wartet nie auf Discord; Fehler
+  stehen nur im Debug-Log (Umgebungsvariable `WANDERWELT_DEBUG=1` in der
+  systemd-Unit, dann `journalctl -u wanderwelt-koordinator`).
+- Nachrichten sind reiner Text mit `allowed_mentions: {"parse": []}`; Namen,
+  Titel (`gruppe.titel`) und Wartungsgrund werden gesäubert (Markdown, Links und
+  Erwähnungen unschädlich gemacht, Länge begrenzt).
+- Windows-Hinweise für Beitrittsanfragen gibt es nur für Admins im Starter,
+  nie auf Discord.
+
+**Ausprobieren:** Mit eingetragenem Webhook und neu gestartetem Koordinator
+auf einem PC „Spielen“ klicken: Nach etwa einer Minute (Start des Servers)
+stehen im Kanal „… hostet jetzt“ und „Die Welt ist online“. Ein weiterer
+Spieler, der beitritt, erscheint nach rund 10 Sekunden. Einen Webhook kannst
+du auch ohne wanderwelt prüfen (die Adresse dabei nicht in geteilte
+Shell-Verläufe schreiben):
+
+```sh
+curl -H "Content-Type: application/json" \
+  -d '{"content":"Test","allowed_mentions":{"parse":[]}}' "<Webhook-Adresse>"
+```
 
 ### Statistik
 

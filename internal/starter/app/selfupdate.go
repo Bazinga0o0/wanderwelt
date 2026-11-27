@@ -390,8 +390,13 @@ func (a *App) suFail(version string, err error) {
 // cleanUpdateDir löscht in Home()/update alles außer zustand.json und keep
 // (ältere geladene Versionen, abgebrochene Downloads, die exe nach einem
 // gelungenen Update). Läuft eine davon noch (die neue exe endet gerade),
-// bleibt sie bis zur nächsten Prüfung liegen.
+// bleibt sie bis zur nächsten Prüfung liegen. Bei einem offenen Tausch
+// (wanderwelt.exe fehlt, .neu oder die Temp-Datei liegt, tausch.go) löscht
+// es nichts: die geladene exe ist dann die letzte Rückfallebene.
 func cleanUpdateDir(keep string) {
+	if swapOpen() {
+		return
+	}
 	entries, err := os.ReadDir(updateDir())
 	if err != nil {
 		return

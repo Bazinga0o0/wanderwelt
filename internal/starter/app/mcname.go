@@ -76,8 +76,10 @@ const nameTries = 3
 // austauschbar.
 var nameConfirm = func(text string) bool { return confirm(text, "Ja", "Anderer Name") }
 
-var nameEntry = func(text string) (string, bool) {
-	s, err := zenity.Entry(text, zenity.Title(notifyTitle), windowIcon())
+// nameEntry fragt den Namen; hinweis (Erklärung oder Fehler zur letzten
+// Eingabe, sonst leer) kommt als Meldungsfenster vor das Eingabefenster.
+var nameEntry = func(hinweis string) (string, bool) {
+	s, err := eingabeMitMeldung(hinweis, labelMinecraftNam, zenity.Title(notifyTitle), windowIcon())
 	return strings.TrimSpace(s), err == nil
 }
 
@@ -140,19 +142,19 @@ func (a *App) askNameFor(ctx context.Context, c *client.Client) *api.Me {
 			}
 		}
 	}
-	prompt := "Dein Minecraft-Java-Name:"
+	hinweis := ""
 	for i := 0; !finished && i < nameTries; i++ {
-		name, ok := nameEntry(prompt)
+		name, ok := nameEntry(hinweis)
 		if !ok {
 			return nil
 		}
 		if !mcNameRE.MatchString(name) {
-			prompt = "Der Name besteht aus 3 bis 16 Buchstaben, Ziffern oder Unterstrichen.\n\nDein Minecraft-Java-Name:"
+			hinweis = "Der Name besteht aus 3 bis 16 Buchstaben, Ziffern oder Unterstrichen."
 			continue
 		}
 		var msg string
 		if finished, msg = submit(name); !finished {
-			prompt = msg + "\n\nDein Minecraft-Java-Name:"
+			hinweis = msg
 		}
 	}
 	if !finished {
