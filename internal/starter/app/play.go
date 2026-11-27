@@ -89,9 +89,14 @@ func (a *App) startPlay(auto int) {
 // playInput ist alles, was „Spielen“ vor der Anfrage beim Koordinator
 // einsammelt.
 type playInput struct {
-	c       *client.Client
-	g       *group.Group
+	c *client.Client // bezieht sich auf die Welt (client.ForWorld), sobald sie feststeht
+	g *group.Group
+	// st und dir: Zustand und Server-Ordner der Welt, die gespielt wird (die
+	// der Gruppe und DefaultDir() für die erste Welt); world ist ihre Kennung
+	// ("": der Koordinator kennt keine Welten). Gesetzt von bindWorld.
 	st      *group.State
+	dir     string
+	world   string
 	m       *api.Manifest
 	paths   *deps.Paths
 	profile api.Profile
@@ -111,6 +116,12 @@ func (a *App) play(ctx context.Context, auto int, dauer bool) error {
 	if err != nil {
 		return err
 	}
+	// Welche Welt: die laufende, sonst die gewählte, sonst die erste.
+	wc, err := a.pickWorld(ctx, in.c)
+	if err != nil {
+		return err
+	}
+	in.bindWorld(wc)
 
 	a.setPhase(phStarting, "misst die Leistung …")
 	in.score, err = retry401(ctx, func() (api.Score, error) { return measureScore(ctx, in.c, in.profile.XmxMB) })
@@ -131,7 +142,7 @@ func (a *App) play(ctx context.Context, auto int, dauer bool) error {
 		a.releaseWorld()
 		return fmt.Errorf("Anfrage beim Koordinator: %w", err)
 	}
-	log.Printf("Play: Rolle %s (Zuschlag %d, Head %s/%d, Grund %q)", resp.Role, resp.LeaseID, resp.WorldID, resp.HeadGeneration, resp.Reason)
+	log.Printf("Play: Rolle %s (Zuschlag %d, Welt %q, Head %s/%d, Grund %q)", resp.Role, resp.LeaseID, resp.GroupWorld, resp.WorldID, resp.HeadGeneration, resp.Reason)
 	dauer = dauer && !a.dauer.manual.Load()
 	switch resp.Role {
 	case api.RoleHost:
@@ -436,6 +447,15 @@ func (a *App) minecraftAddress() string {
 // angefordert (siehe play). ov: Übernahme des Hostens im laufenden Betrieb
 // (Ersatz-Port, Name des alten Hosts); nil: gewöhnlicher Start.
 func (a *App) startHost(in playInput, resp *api.PlayResponse, dauer bool, ov *overtake) {
+	// Die Welt des Zuschlags gilt: Ordner, Zustand und Client sind die dieser
+	// Welt (nie die einer anderen).
+	if resp.GroupWorld != "" && resp.GroupWorld != in.world {
+		if wc, err := a.worldFor(resp.GroupWorld, a.client(), true); err == nil {
+			in.bindWorld(wc)
+		} else {
+			log.Printf("Welt %s: %v", resp.GroupWorld, err)
+		}
+	}
 	ctx, cancel := context.WithCancel(a.ctx)
 	done := make(chan struct{})
 	addr := cmp.Or(resp.MinecraftAddress, a.minecraftAddress())
@@ -468,6 +488,8 @@ func (a *App) startHost(in playInput, resp *api.PlayResponse, dauer bool, ov *ov
 		BaseWorldID:      resp.WorldID,
 		Group:            in.g,
 		State:            in.st,
+		Dir:              in.dir,
+		Fresh:            resp.Empty,
 		Profile:          in.profile,
 		MinecraftVersion: in.m.MinecraftVersion,
 		HashCache:        a.hc,
@@ -498,7 +520,8 @@ func (a *App) startHost(in playInput, resp *api.PlayResponse, dauer bool, ov *ov
 		// gelöscht (eine ältere Vormerkung zählt nach einem harten Ende
 		// nicht). Vor releaseWorld prüfen, solange niemand sonst an die Welt
 		// darf.
-		_, markerErr := os.Lstat(filepath.Join(host.DefaultDir(), host.MarkerName))
+		markerDir := cmp.Or(in.dir, host.DefaultDir())
+		_, markerErr := os.Lstat(filepath.Join(markerDir, host.MarkerName))
 		saved := pending && errors.Is(markerErr, fs.ErrNotExist)
 		winsys.KeepAwake(false)
 		a.mu.Lock()

@@ -21,7 +21,9 @@ import (
 const sicherungUsage = `  wanderwelt-koordinator sicherung <ziel> [--config PATH]
       sichert data_dir nach <ziel> (muss auf demselben Dateisystem liegen): Blobs als Hardlink (kein
       zusätzlicher Platz), Metadaten und Konfiguration als Kopie; nur bei gestopptem Dienst oder in der
-      Wartung, wenn „wartung start“ „bereit“ gemeldet hat. Rückweg: Dienst stoppen, altes Programm
+      Wartung, wenn „wartung start“ „bereit“ gemeldet hat. Danach steht
+      Zeit und Ziel in data_dir/sicherung.json (die Gesundheit der Admins warnt bei einer Sicherung
+      über 7 Tage). Rückweg: Dienst stoppen, altes Programm
       zurück, data_dir durch die Sicherung ersetzen
 `
 
@@ -89,6 +91,11 @@ func sicherungMain(args []string, env wartungEnv, stdout, stderr io.Writer) int 
 			return 1
 		}
 	}
+	// Marke für die Gesundheit (GET /v1/health): Zeit und Ziel der letzten Sicherung.
+	// Scheitert sie, ist die Sicherung trotzdem gelungen.
+	if err := sicherung.MarkeSchreiben(cfg.DataDir, sicherung.Marke{Zeit: env.now().UTC(), Ziel: absOr(ziel)}); err != nil {
+		fmt.Fprintf(stderr, "sicherung: %s nicht geschrieben (die Gesundheit zeigt die Sicherung als unbekannt): %v\n", sicherung.MarkeName, err)
+	}
 	fmt.Fprintf(stdout, "Gesichert nach %s: %d Blobs als Hardlink (kein zusätzlicher Platz), %d Dateien kopiert (%d Bytes); "+
 		"Konfiguration in %s.\n", ziel, res.Verlinkt, res.Kopiert, res.KopiertByte, filepath.Join(ziel, "konfiguration"))
 	return 0
@@ -114,4 +121,12 @@ func nichtBereit(dataDir string, now time.Time) string {
 		return "Die Wartung ist noch nicht bereit: " + cmpHaengt(b) + "."
 	}
 	return ""
+}
+
+// absOr liefert den absoluten Pfad von p, bei einem Fehler p selbst.
+func absOr(p string) string {
+	if a, err := filepath.Abs(p); err == nil {
+		return a
+	}
+	return p
 }

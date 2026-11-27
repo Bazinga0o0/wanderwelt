@@ -17,15 +17,22 @@
 //	                            Text (Standard 300, höchstens 2000)
 //	GET  /v1/mitglieder       → []api.MemberInfo (JSON)
 //	GET  /v1/beitritte        → []api.JoinRequestInfo (JSON; nur Admins)
+//	GET  /v1/statistik        → api.Stats (JSON; jedes Mitglied)
+//	GET  /v1/gesundheit      → api.Health (JSON; nur Admins)
+//	GET  /v1/welten          → api.WorldList (JSON; jedes Mitglied)
 //	GET  /v1/entdecken[?neu=1] → Entdecken (JSON): gelistete Gruppen der tunnel-Server
 //	POST /v1/{gruppe|entdeckenbeitritt} = {"id": …} bzw. {"url": …, "name": …}
 //	POST /v1/{play|beenden|beendenohne|import|profil|autostart|zurueckholen|speicher|rolle|mcname|beitritt|logordner}
+//	POST /v1/{welt|weltneu|weltaendern|weltloeschen}
 //
 // Körper der Aktionen (JSON): import = {"dir": …, "ohne_spielerdatei":
 // bool}; profil = api.Profile; autostart = {"an": bool}; zurueckholen =
 // api.RestoreRequest; speicher = api.BudgetRequest; rolle = {"email": …,
 // "admin": bool, "op": bool}; beitritt = {"email": …, "annehmen": bool}
-// (Beitrittsanfrage annehmen oder ablehnen); die übrigen ohne Körper (beendenohne: Hosten
+// (Beitrittsanfrage annehmen oder ablehnen); welt = {"id": …} (Welt für
+// „Spielen“ wählen), weltneu = api.WorldCreate, weltaendern = {"id": …,
+// "patch": api.WorldPatch}, weltloeschen = {"id": …, "name": …} (name: der
+// Name der Welt als Bestätigung; die Verwaltung dürfen nur Admins); die übrigen ohne Körper (beendenohne: Hosten
 // beenden, ohne die Welt an einen Mitspieler zu übergeben). Antwort: 202 für
 // play, beenden, beendenohne und import, 200 mit JSON für die übrigen; Fehler als 4xx mit
 // {"fehler": "<Text für den Nutzer>"}.
@@ -80,10 +87,25 @@ type Zustand struct {
 	// nicht gewechselt werden kann, sonst leer.
 	Gruppen       []GruppeEintrag
 	WechselSperre string
+	// Welt: Auswahl der Welt der Gruppe (leer, wenn der Koordinator keine
+	// Welten kennt).
+	Welt WeltZustand
 	// ZeigeEntdecken: Das Fenster soll zum Reiter „Entdecken“ springen
 	// (wanderwelt://beitreten bei mehreren Gruppen); gilt einige Sekunden.
 	ZeigeEntdecken bool
 	Hinweise       []Hinweis // die letzten 20, Seq aufsteigend
+}
+
+// WeltZustand ist die Weltauswahl der aktiven Gruppe. Die Liste der Welten
+// steht in Status.Worlds. Aktiv: die Welt, die „Spielen“ nimmt (die laufende,
+// sonst die gewählte, sonst die erste; "" ohne Weltliste). Gewaehlt: die
+// eigene Wahl ("" ohne). Laufend: die Welt, die gerade gehostet wird. Sperre:
+// Grund (deutscher Text), warum die Wahl gerade nicht wechseln kann, sonst leer.
+type WeltZustand struct {
+	Aktiv    string
+	Gewaehlt string
+	Laufend  string
+	Sperre   string
 }
 
 // Notfallkopie ist der Stand der Notfallkopie dieses PCs (Reiter Hosten).
@@ -250,6 +272,26 @@ func (c *Client) Mitglieder(ctx context.Context) ([]api.MemberInfo, error) {
 		return nil, err
 	}
 	return r, nil
+}
+
+// Statistik holt Spielzeit, Hostzeit und Sitzungen je Mitglied (jedes
+// Mitglied; ein älterer Koordinator ist „zu alt“).
+func (c *Client) Statistik(ctx context.Context) (*api.Stats, error) {
+	var r api.Stats
+	if err := c.getJSON(ctx, "/v1/statistik", &r); err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
+// Welten holt die Weltliste der Gruppe (vom Koordinator durchgereicht; ein
+// älterer Koordinator ist „zu alt“).
+func (c *Client) Welten(ctx context.Context) (*api.WorldList, error) {
+	var r api.WorldList
+	if err := c.getJSON(ctx, "/v1/welten", &r); err != nil {
+		return nil, err
+	}
+	return &r, nil
 }
 
 // Beitritte holt die offenen Beitrittsanfragen (nur für Admins; sonst Fehler

@@ -78,6 +78,7 @@ type handover struct {
 	inLease  int64
 	port     int
 	worldID  string
+	groupW   string // Welt der Gruppe (Kennung), die übergeben wird
 	headGen  int64
 	offerAt  time.Time
 	accepted bool // der wartende Zuschlag hat sein erstes Lebenszeichen geschickt
@@ -347,6 +348,7 @@ func (s *Server) handlePresence(w http.ResponseWriter, r *http.Request) {
 		at:     now,
 	}
 	s.presMu.Unlock()
+	s.noteStarter(id.member.Email, req.MachineID, req.StarterVersion)
 
 	var resp api.PresenceResponse
 	if h := s.ho.Load(); h != nil && h.state == api.HandoverStarting && !h.accepted &&
@@ -356,6 +358,7 @@ func (s *Server) handlePresence(w http.ResponseWriter, r *http.Request) {
 			HandoverID:       h.id,
 			LeaseID:          h.inLease,
 			WorldID:          h.worldID,
+			GroupWorld:       h.groupW,
 			HeadGeneration:   h.headGen,
 			Port:             h.port,
 			From:             from,
@@ -511,10 +514,8 @@ func (s *Server) handleHandoverReady(w http.ResponseWriter, r *http.Request) {
 		// den Zustand unter commitMu, darum ist der Head hier endgültig.
 		s.commitMu.Lock()
 		defer s.commitMu.Unlock()
-		worldID, head, err := s.head()
-		if err != nil {
-			return err
-		}
+		groupW := s.normWorld(info.World)
+		worldID, head := s.st.HeadRefOf(groupW)
 		if req.WorldID != worldID || req.Generation != head {
 			return &httpError{http.StatusConflict, fmt.Sprintf(
 				"Der gemeldete Stand %q/%d ist nicht der aktuelle (%q/%d)", req.WorldID, req.Generation, worldID, head)}
@@ -546,7 +547,7 @@ func (s *Server) handleHandoverReady(w http.ResponseWriter, r *http.Request) {
 		n := *h
 		n.state = api.HandoverStarting
 		n.inLease, n.port = g.LeaseID, port
-		n.worldID, n.headGen = worldID, head
+		n.worldID, n.headGen, n.groupW = worldID, head, groupW
 		n.offerAt = s.now()
 		s.setHoLocked(&n)
 		s.log.Info("Übergabe: Angebot bereit", "id", h.id, "lease", g.LeaseID, "port", port)

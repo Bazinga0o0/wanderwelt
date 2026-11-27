@@ -349,7 +349,10 @@ func discardWorld(world string) (string, error) {
 	} else if err != nil {
 		return "", err
 	}
-	home := group.Dir()
+	// Beiseitegelegte Stände bleiben bei ihrer Welt: im Gruppenordner (erste
+	// Welt) oder im Ordner der weiteren Welt (welten\<id>), nie bei einer
+	// anderen.
+	home := group.WorldHomeOfServerDir(filepath.Dir(world))
 	if err := os.MkdirAll(home, 0o755); err != nil {
 		return "", err
 	}
@@ -634,7 +637,7 @@ func uploadPending(ctx context.Context, c *client.Client, st *group.State, dir s
 	if f := recoveredHook.Load(); f != nil {
 		(*f)(Committed{
 			Dir: filepath.Join(dir, StagingName), WorldID: gen.WorldID, Generation: gen.Number,
-			MinecraftVersion: gen.MinecraftVersion, At: time.Now(),
+			MinecraftVersion: gen.MinecraftVersion, At: time.Now(), GroupWorld: c.World(),
 		})
 	}
 	return nil
@@ -668,7 +671,14 @@ func commitPending(ctx context.Context, c *client.Client, lease int64, st *group
 	if err != nil {
 		return nil, err
 	}
-	if head == nil || head.WorldID != st.LastUploadedWorldID || head.Number != st.LastUploadedGeneration {
+	// Eine Welt ohne Stand (frisch angelegt, der erste Stand fehlt noch) hat
+	// die Basis ""/0.
+	var baseWorld string
+	var baseGen int64
+	if head != nil {
+		baseWorld, baseGen = head.WorldID, head.Number
+	}
+	if baseWorld != st.LastUploadedWorldID || baseGen != st.LastUploadedGeneration {
 		return nil, errors.New("der Head ist nicht mehr die Basis des Stands")
 	}
 	// Nie gleichzeitig mit Download (syncSlot): Recover läuft vor jeder
@@ -691,14 +701,20 @@ func commitPending(ctx context.Context, c *client.Client, lease int64, st *group
 	if err != nil {
 		return nil, err
 	}
+	// Gehostet wurde die Version der Basis (der Host hostet nur die
+	// Manifest-Version, und die Basis stammt aus derselben Sitzung); eine
+	// Welt ohne Stand hat keine (dann fehlt die Angabe, wie bei „nichts zu
+	// prüfen“).
+	var version string
+	if head != nil {
+		version = head.MinecraftVersion
+	}
 	gen, err := worldsync.UploadAndCommit(ctx, c, staging, api.CommitRequest{
-		LeaseID:        lease,
-		MachineID:      st.MachineID,
-		BaseWorldID:    head.WorldID,
-		BaseGeneration: head.Number,
-		// Gehostet wurde die Version der Basis (der Host hostet nur die
-		// Manifest-Version, und die Basis stammt aus derselben Sitzung).
-		MinecraftVersion: head.MinecraftVersion,
+		LeaseID:          lease,
+		MachineID:        st.MachineID,
+		BaseWorldID:      baseWorld,
+		BaseGeneration:   baseGen,
+		MinecraftVersion: version,
 		Files:            files,
 	})
 	if err != nil {

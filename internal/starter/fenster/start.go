@@ -28,6 +28,7 @@ type startAnsicht struct {
 	codeKopiertBis                          time.Time
 	wartet                                  bool
 	fehler                                  string
+	welten                                  weltAuswahl
 }
 
 // mitspielen: Die Instanz spielt mit (ist nicht Host).
@@ -139,6 +140,12 @@ func (v *startAnsicht) layout(gtx layout.Context, u *oberflaeche, s schnappschus
 	if z.LastErr != "" {
 		teile = append(teile, func(gtx layout.Context) layout.Dimensions {
 			return t.meldung(gtx, meldungFehler, "Das hat nicht geklappt", z.LastErr)
+		})
+	}
+	// Welt der Gruppe (ab zwei Welten), über dem Knopf „Spielen“.
+	if len(weltenListe(s)) >= 2 {
+		teile = append(teile, func(gtx layout.Context) layout.Dimensions {
+			return v.welten.layout(gtx, u, s)
 		})
 	}
 	teile = append(teile, func(gtx layout.Context) layout.Dimensions {

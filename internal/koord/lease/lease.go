@@ -57,6 +57,10 @@ type Candidate struct {
 	Email, MinecraftName, MachineID string
 	AccountID                       int64
 	Score                           api.Score
+	// World: die gewünschte Welt der Gruppe (Kennung aus der Weltliste); ""
+	// heißt „nicht angegeben“ und passt zu jeder Welt (ältere Starter,
+	// Gruppe ohne Weltliste).
+	World string
 }
 
 // Grant ist die Antwort auf eine Anfrage. Bei Role "join" verweisen LeaseID,
@@ -68,7 +72,18 @@ type Grant struct {
 	Host          api.HostInfo
 	HostAccountID int64
 	Reason        string
+	// World: die Welt, auf die sich der Zuschlag bezieht (bei "denied" mit
+	// ReasonOtherWorld die laufende Welt).
+	World string
 }
+
+// ReasonOtherWorld: Es läuft (oder startet gerade) eine andere Welt der
+// Gruppe; Grant.World nennt sie. Es läuft immer nur eine Welt gleichzeitig.
+// Der Aufrufer ersetzt den Text durch einen mit dem Namen der Welt.
+const ReasonOtherWorld = "Es läuft gerade eine andere Welt"
+
+// sameWorld: a und b meinen dieselbe Welt ("" passt zu jeder).
+func sameWorld(a, b string) bool { return a == "" || b == "" || a == b }
 
 // ReasonUploading: Den Zuschlag hält gerade jemand nur zum Hochladen
 // (Nachreichen, Welt übernehmen); einen Server zum Mitspielen gibt es nicht.
@@ -83,11 +98,16 @@ type Info struct {
 	Host      api.HostInfo
 	LeaseID   int64
 	AccountID int64
+	// World: Welt des Zuschlags ("": keine angegeben, gilt als erste Welt).
+	World string
 	// UploadOnly: Zuschlag aus Acquire (nur zum Hochladen, ohne Server).
 	UploadOnly bool
 	// Ready: Das letzte Lebenszeichen meldete einen laufenden, erreichbaren
 	// Server und ist jünger als ReadyMaxAge. Nur im Speicher.
 	Ready bool
+	// LastBeat: Zeit des letzten Lebenszeichens (Zuschlag ohne Lebenszeichen
+	// seit der Vergabe: die Vergabe), aus dem Ablauf berechnet.
+	LastBeat time.Time
 }
 
 // Manager hält den Zuschlag. Alle Methoden sind nebenläufig nutzbar.
@@ -126,9 +146,13 @@ type hostState struct {
 	ExpiresAt     time.Time `json:"expires_at"`
 	// UploadOnly: Zuschlag aus Acquire, nur zum Hochladen.
 	UploadOnly bool `json:"upload_only,omitempty"`
+	// World: die Welt der Gruppe, für die der Zuschlag gilt ("": keine
+	// angegeben, z. B. aus der Zeit vor der Weltliste).
+	World string `json:"world,omitempty"`
 }
 
 type window struct {
+	world   string // Welt der ersten Anfrage; alle im Fenster wollen sie
 	entries []*entry
 	done    chan struct{} // geschlossen, sobald alle entries beantwortet sind
 }
@@ -180,6 +204,11 @@ func (m *Manager) Request(ctx context.Context, c Candidate) (Grant, error) {
 			g.Role, g.Reason = api.RoleDenied, ReasonUploading
 			return g, nil
 		}
+		if !sameWorld(h.World, c.World) {
+			g := joinGrant(h)
+			g.Role, g.Reason = api.RoleDenied, ReasonOtherWorld
+			return g, nil
+		}
 		return joinGrant(h), nil
 	}
 	if m.validIncomingLocked() != nil {
@@ -189,10 +218,20 @@ func (m *Manager) Request(ctx context.Context, c Candidate) (Grant, error) {
 		return Grant{Role: api.RoleDenied, Reason: ReasonHandover}, nil
 	}
 	if m.win == nil {
-		m.win = &window{done: make(chan struct{})}
+		m.win = &window{world: c.World, done: make(chan struct{})}
 		go m.closeWindow(m.win, m.clk.After(Window))
 	}
 	w := m.win
+	if !sameWorld(w.world, c.World) {
+		// Das Fenster wählt einen Host für die Welt der ersten Anfrage; wer
+		// eine andere Welt will, wartet nicht mit.
+		world := w.world
+		m.mu.Unlock()
+		return Grant{Role: api.RoleDenied, Reason: ReasonOtherWorld, World: world}, nil
+	}
+	if w.world == "" {
+		w.world = c.World
+	}
 	e := &entry{c: c}
 	w.entries = append(w.entries, e)
 	m.mu.Unlock()
@@ -279,6 +318,7 @@ func (m *Manager) grantLocked(c Candidate, uploadOnly bool) (*hostState, error) 
 		MachineID:     c.MachineID,
 		ExpiresAt:     m.clk.Now().Add(LeaseTTL),
 		UploadOnly:    uploadOnly,
+		World:         c.World,
 	}
 	if m.validIncomingLocked() != nil {
 		return nil, ErrBusy
@@ -301,7 +341,8 @@ func (m *Manager) grantLocked(c Candidate, uploadOnly bool) (*hostState, error) 
 func (m *Manager) GrantIncoming(c Candidate) (Grant, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if h := m.validLocked(); h == nil || h.UploadOnly {
+	main := m.validLocked()
+	if main == nil || main.UploadOnly {
 		return Grant{}, ErrLeaseLost
 	}
 	if m.validIncomingLocked() != nil {
@@ -314,6 +355,7 @@ func (m *Manager) GrantIncoming(c Candidate) (Grant, error) {
 		MinecraftName: c.MinecraftName,
 		MachineID:     c.MachineID,
 		ExpiresAt:     m.clk.Now().Add(LeaseTTL),
+		World:         main.World, // dieselbe Welt: die Übergabe wechselt nur den PC
 	}
 	next := state{LastLeaseID: in.LeaseID, Host: m.st.Host, Incoming: in}
 	if err := m.save(next); err != nil {
@@ -333,7 +375,8 @@ func (m *Manager) Incoming() (Info, bool) {
 		return Info{}, false
 	}
 	ready := m.inReady && m.clk.Now().Sub(m.inReadyAt) < ReadyMaxAge
-	return Info{Host: h.info(), LeaseID: h.LeaseID, AccountID: h.AccountID, Ready: ready}, true
+	return Info{Host: h.info(), LeaseID: h.LeaseID, AccountID: h.AccountID, World: h.World, Ready: ready,
+		LastBeat: h.ExpiresAt.Add(-LeaseTTL)}, true
 }
 
 // DropIncoming verwirft den wartenden Zuschlag (auch einen abgelaufenen).
@@ -458,7 +501,8 @@ func (m *Manager) Info() (Info, bool) {
 		return Info{}, false
 	}
 	ready := m.ready && m.clk.Now().Sub(m.readyAt) < ReadyMaxAge
-	return Info{Host: h.info(), LeaseID: h.LeaseID, AccountID: h.AccountID, UploadOnly: h.UploadOnly, Ready: ready}, true
+	return Info{Host: h.info(), LeaseID: h.LeaseID, AccountID: h.AccountID, World: h.World, UploadOnly: h.UploadOnly, Ready: ready,
+		LastBeat: h.ExpiresAt.Add(-LeaseTTL)}, true
 }
 
 // Expire räumt einen abgelaufenen Zuschlag ab und meldet ihn genau einmal
@@ -511,6 +555,26 @@ func (m *Manager) Report(leaseID int64, players []string, ready bool) {
 		m.inPlayers = append([]string(nil), players...)
 		m.inReady, m.inReadyAt = ready, m.clk.Now()
 	}
+}
+
+// BusyWorlds liefert die Welten, die gerade belegt sind: die des offenen
+// Sammelfensters, des gültigen Zuschlags (auch nur zum Hochladen) und des
+// wartenden Zuschlags. "" steht für „keine Welt angegeben“ (gilt als erste
+// Welt). Leer, wenn nichts läuft.
+func (m *Manager) BusyWorlds() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []string
+	if m.win != nil {
+		out = append(out, m.win.world)
+	}
+	if h := m.validLocked(); h != nil {
+		out = append(out, h.World)
+	}
+	if h := m.validIncomingLocked(); h != nil {
+		out = append(out, h.World)
+	}
+	return out
 }
 
 // Players liefert die zuletzt gemeldeten Spieler des gültigen Hosts (leer,
@@ -613,11 +677,11 @@ func (h *hostState) info() api.HostInfo {
 }
 
 func hostGrant(h *hostState) Grant {
-	return Grant{Role: api.RoleHost, LeaseID: h.LeaseID, Host: h.info(), HostAccountID: h.AccountID}
+	return Grant{Role: api.RoleHost, LeaseID: h.LeaseID, Host: h.info(), HostAccountID: h.AccountID, World: h.World}
 }
 
 func joinGrant(h *hostState) Grant {
-	return Grant{Role: api.RoleJoin, LeaseID: h.LeaseID, Host: h.info(), HostAccountID: h.AccountID}
+	return Grant{Role: api.RoleJoin, LeaseID: h.LeaseID, Host: h.info(), HostAccountID: h.AccountID, World: h.World}
 }
 
 // Best liefert den Index des besten Kandidaten, -1 bei leerer Liste.

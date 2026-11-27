@@ -72,6 +72,10 @@ const (
 	aktionMcName        = "mcname"        // Admin: Minecraft-Namen eines Mitglieds ändern
 	aktionBeitritt      = "beitritt"      // Admin: Beitrittsanfrage annehmen oder ablehnen
 	aktionGruppe        = "gruppe"        // aktive Gruppe wechseln
+	aktionWelt          = "welt"          // Welt für „Spielen“ wählen
+	aktionWeltNeu       = "weltneu"       // Admin: Welt anlegen
+	aktionWeltAendern   = "weltaendern"   // Admin: Welt umbenennen / Eigenschaften ändern
+	aktionWeltLoeschen  = "weltloeschen"  // Admin: Welt löschen (mit Bestätigung)
 )
 
 // setAutostart trägt die installierte Kopie in den Autostart ein bzw.
@@ -119,9 +123,21 @@ func (a *App) ansicht(w http.ResponseWriter, r *http.Request, name string) {
 		koordAufruf(a, w, r, "Mitglieder", func(ctx context.Context, c *client.Client) ([]api.MemberInfo, error) {
 			return c.Members(ctx)
 		})
+	case "statistik":
+		koordAufruf(a, w, r, "Statistik", func(ctx context.Context, c *client.Client) (*api.Stats, error) {
+			return c.Stats(ctx)
+		})
 	case "beitritte":
 		koordAufruf(a, w, r, "Beitrittsanfragen", func(ctx context.Context, c *client.Client) ([]api.JoinRequestInfo, error) {
 			return c.ListJoinRequests(ctx)
+		})
+	case "gesundheit":
+		koordAufruf(a, w, r, "Gesundheit", func(ctx context.Context, c *client.Client) (*api.Health, error) {
+			return c.Health(ctx)
+		})
+	case "welten":
+		koordAufruf(a, w, r, "Welten", func(ctx context.Context, c *client.Client) (*api.WorldList, error) {
+			return c.Worlds(ctx)
 		})
 	case "entdecken":
 		a.entdeckenAnsicht(w, r)
@@ -140,7 +156,8 @@ func (a *App) ansicht(w http.ResponseWriter, r *http.Request, name string) {
 func (a *App) aktion(w http.ResponseWriter, r *http.Request, name string, body []byte) {
 	switch name {
 	case aktionBeenden, aktionBeendenOhne, aktionImport, aktionProfil, aktionAutostart, aktionZurueckholen,
-		aktionSpeicher, aktionRolle, aktionLogordner, aktionMcName, aktionBeitritt, aktionNotfall, aktionNotfallOrdner, aktionGruppe, aktionEntdeckenBeitritt:
+		aktionSpeicher, aktionRolle, aktionLogordner, aktionMcName, aktionBeitritt, aktionNotfall, aktionNotfallOrdner, aktionGruppe, aktionEntdeckenBeitritt,
+		aktionWelt, aktionWeltNeu, aktionWeltAendern, aktionWeltLoeschen:
 		log.Printf("Fenster: %s", name)
 	default:
 		http.Error(w, "unbekannte Aktion", http.StatusNotFound)
@@ -328,6 +345,8 @@ func (a *App) aktion(w http.ResponseWriter, r *http.Request, name string, body [
 			return
 		}
 		antwortJSON(w, http.StatusOK, struct{}{})
+	case aktionWelt, aktionWeltNeu, aktionWeltAendern, aktionWeltLoeschen:
+		a.weltenAktion(w, r, name, body)
 	case aktionLogordner:
 		if err := openFolder(filepath.Dir(LogPath())); err != nil {
 			antwortFehler(w, http.StatusInternalServerError, err.Error())
@@ -368,6 +387,7 @@ func (a *App) zustand() fensterapi.Zustand {
 	z.Gruppencode = a.groupCode()
 	z.Gruppen, _ = a.gruppenListe()
 	z.WechselSperre = a.wechselSperre()
+	z.Welt = a.weltZustand()
 	a.mu.Lock()
 	z.ZeigeEntdecken = time.Now().Before(a.zeigeEntdeckenBis)
 	a.mu.Unlock()

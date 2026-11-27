@@ -15,7 +15,10 @@ func NewMojangResolverAt(cachePath, base string, now func() time.Time) *MojangRe
 }
 
 // SetNow setzt die Uhr des Servers (nur Tests; vor dem ersten Aufruf).
-func (s *Server) SetNow(now func() time.Time) { s.now = now }
+func (s *Server) SetNow(now func() time.Time) {
+	s.now = now
+	s.health.started = now() // die Laufzeit zählt ab der gestellten Uhr
+}
 
 // SetBlobStall setzt die Frist, nach der ein Blob-Teil ohne neue Daten
 // abbricht, und liefert die Rücknahme (nur Tests).
@@ -34,3 +37,9 @@ func (s *Server) SetDiskFree(free func(dir string) int64) {
 // SetManifestCheckHook setzt eine Funktion, die zu Beginn jeder Prüfung
 // eines neuen Manifests läuft (nur Tests; vor dem ersten Aufruf).
 func (s *Server) SetManifestCheckHook(f func()) { s.manifestCheckHook = f }
+
+// SetDiskTotal setzt die Gesamtgröße des Dateisystems von data_dir (nur
+// Tests; vor dem ersten Aufruf).
+func (s *Server) SetDiskTotal(total func(dir string) int64) {
+	s.health.diskTotal = func(dir string) (int64, bool) { return total(dir), true }
+}

@@ -48,6 +48,8 @@ type weltAnsicht struct {
 	uebernehmen          map[string]*widget.Clickable
 	importFehler         string
 	importWartet         bool
+
+	verwaltung weltenVerwaltung // Welten der Gruppe verwalten (Admins)
 }
 
 // importAuftrag ist der Körper der Aktion „import“.
@@ -85,6 +87,12 @@ func (v *weltAnsicht) layout(gtx layout.Context, u *oberflaeche, s schnappschuss
 		}))
 	}
 	if admin {
+		// Nur mit Weltliste: ein Koordinator ohne mehrere Welten hat nichts zu verwalten.
+		if len(weltenListe(s)) > 0 {
+			teile = append(teile, mitAbstand(func(gtx layout.Context) layout.Dimensions {
+				return v.verwaltung.layout(gtx, u, s)
+			}))
+		}
 		teile = append(teile, mitAbstand(func(gtx layout.Context) layout.Dimensions {
 			return v.importKarte(gtx, u, s, jetzt)
 		}))
@@ -136,6 +144,14 @@ func (v *weltAnsicht) weltTeile(gtx layout.Context, u *oberflaeche, s schnappsch
 	}
 	hostet := s.z != nil && s.z.Status != nil && s.z.Status.Host != nil
 	ausstehend := s.z != nil && s.z.Status != nil && s.z.Status.RestorePending != nil
+	// Gibt es mehrere Welten der Gruppe, tragen die Köpfe deren Namen.
+	gruppenwelten := map[string]bool{}
+	for _, w := range g.Worlds {
+		if w.GroupWorld != "" {
+			gruppenwelten[w.GroupWorld] = true
+		}
+	}
+	mehrere := len(gruppenwelten) > 1
 
 	var teile []layout.Widget
 	for wi, w := range g.Worlds {
@@ -154,7 +170,7 @@ func (v *weltAnsicht) weltTeile(gtx layout.Context, u *oberflaeche, s schnappsch
 		}
 		teile = append(teile, func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Top: unit.Dp(abstand), Bottom: 8}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return v.weltKopf(gtx, u, w, k, offen, jetzt)
+				return v.weltKopf(gtx, u, w, k, offen, mehrere, jetzt)
 			})
 		})
 		if !offen {
@@ -184,11 +200,18 @@ func (v *weltAnsicht) weltTeile(gtx layout.Context, u *oberflaeche, s schnappsch
 	return teile
 }
 
-func (v *weltAnsicht) weltKopf(gtx layout.Context, u *oberflaeche, w api.WorldInfo, k *widget.Clickable, offen bool, jetzt time.Time) layout.Dimensions {
+func (v *weltAnsicht) weltKopf(gtx layout.Context, u *oberflaeche, w api.WorldInfo, k *widget.Clickable, offen, mehrere bool, jetzt time.Time) layout.Dimensions {
 	t := u.th
 	titel := "Aktive Welt"
 	if !w.Active {
 		titel = "Archiv"
+	}
+	// Mit mehreren Welten steht der Name der Welt der Gruppe im Titel.
+	if mehrere && w.GroupName != "" {
+		titel = kuerze(w.GroupName, 30)
+		if !w.Active {
+			titel = "Archiv von " + titel
+		}
 	}
 	info := fmt.Sprintf("%s · %d %s", kurzID(w.WorldID), len(w.Generations), plural(len(w.Generations), "Stand", "Stände"))
 	if !w.Active && len(w.Generations) > 0 {

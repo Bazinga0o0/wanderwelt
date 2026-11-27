@@ -40,6 +40,10 @@ const (
 	pruneEvery  = time.Hour
 )
 
+// version wird beim Bauen gesetzt (-ldflags "-X main.version=…"); GET /v1/health
+// meldet sie.
+var version = "dev"
+
 func main() {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
 	args := os.Args[1:]
@@ -135,6 +139,7 @@ func run(cfgPath string) error {
 	}
 	uuids := server.NewMojangResolver(filepath.Join(cfg.DataDir, "uuids.json"))
 	srv := server.New(cfg, lm, st, ph, uuids)
+	srv.SetVersion(version)
 	if manifest != nil {
 		srv.UseManifest(manifest)
 	}
@@ -182,7 +187,7 @@ func run(cfgPath string) error {
 		}
 	}()
 
-	slog.Info("Koordinator läuft", "listen", ln.Addr().String(), "auth", cfg.Auth.Mode, "data_dir", cfg.DataDir)
+	slog.Info("Koordinator läuft", "version", version, "listen", ln.Addr().String(), "auth", cfg.Auth.Mode, "data_dir", cfg.DataDir)
 	errc := make(chan error, 1)
 	go func() { errc <- hs.Serve(ln) }()
 	select {
@@ -198,6 +203,7 @@ func run(cfgPath string) error {
 	}
 	// Ein Aufräumen nach einem neuen Speicherbudget läuft zu Ende.
 	srv.Wait()
+	srv.FlushStats()
 	return nil
 }
 
@@ -247,7 +253,7 @@ func storeDir(cfg *config.Config) string { return filepath.Join(cfg.DataDir, "st
 func worldActivate(args []string) int {
 	fs := flag.NewFlagSet("world activate", flag.ContinueOnError)
 	cfgPath := fs.String("config", defaultConfig, "Konfigurationsdatei")
-	world := fs.String("world", "", "ID der Welt, die wieder aktiv werden soll")
+	world := fs.String("world", "", "Weltkennung (Archiv), die für ihre Welt wieder gelten soll")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -259,7 +265,7 @@ func worldActivate(args []string) int {
 		fmt.Fprintln(os.Stderr, "world activate:", err)
 		return 1
 	}
-	fmt.Printf("Welt %s ist jetzt die Gruppenwelt.\n", *world)
+	fmt.Printf("Die Weltkennung %s gilt jetzt wieder für ihre Welt.\n", *world)
 	return 0
 }
 

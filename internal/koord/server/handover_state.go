@@ -44,6 +44,7 @@ type hoDisk struct {
 	InLease    int64        `json:"in_lease,omitempty"`
 	Port       int          `json:"port,omitempty"`
 	WorldID    string       `json:"world_id,omitempty"`
+	GroupWorld string       `json:"group_world,omitempty"`
 	HeadGen    int64        `json:"head_gen,omitempty"`
 	Accepted   bool         `json:"accepted,omitempty"`
 	Ready      bool         `json:"ready,omitempty"`
@@ -77,7 +78,7 @@ func (s *Server) saveHoLocked() {
 		f.Handover = &hoDisk{
 			ID: h.id, State: h.state, OldLease: h.oldLease, OldMachine: h.oldMachine, From: h.from,
 			To:      candDisk{h.to.Email, h.to.MinecraftName, h.to.MachineID, h.to.AccountID},
-			InLease: h.inLease, Port: h.port, WorldID: h.worldID, HeadGen: h.headGen,
+			InLease: h.inLease, Port: h.port, WorldID: h.worldID, GroupWorld: h.groupW, HeadGen: h.headGen,
 			Accepted: h.accepted, Ready: h.ready, Reason: h.reason,
 		}
 	}
@@ -122,7 +123,7 @@ func (s *Server) loadHo() {
 			to: lease.Candidate{Email: d.To.Email, MinecraftName: d.To.MinecraftName,
 				MachineID: d.To.MachineID, AccountID: d.To.AccountID},
 			startedAt: now, offerAt: now, failedAt: now,
-			inLease: d.InLease, port: d.Port, worldID: d.WorldID, headGen: d.HeadGen,
+			inLease: d.InLease, port: d.Port, worldID: d.WorldID, groupW: d.GroupWorld, headGen: d.HeadGen,
 			accepted: d.Accepted, ready: d.Ready, reason: d.Reason,
 		}
 		s.ho.Store(h)

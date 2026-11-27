@@ -83,7 +83,8 @@ func (s *Server) handleGenerations(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := api.GenerationsResponse{Worlds: make([]api.WorldInfo, 0, len(worlds))}
 	for _, wm := range worlds {
-		wi := api.WorldInfo{WorldID: wm.WorldID, Active: wm.Active, Generations: make([]api.GenerationInfo, 0, len(wm.Gens))}
+		wi := api.WorldInfo{WorldID: wm.WorldID, Active: wm.Active, GroupWorld: wm.GroupWorld, GroupName: wm.GroupName,
+			Generations: make([]api.GenerationInfo, 0, len(wm.Gens))}
 		for _, g := range wm.Gens {
 			wi.Generations = append(wi.Generations, api.GenerationInfo{
 				WorldID:          g.WorldID,

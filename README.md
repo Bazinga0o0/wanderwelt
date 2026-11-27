@@ -117,6 +117,24 @@ Speicher mehr; wanderwelt läuft im Infobereich weiter.
   dem Server, nicht im Fenster.
 - **Log**: die letzten Zeilen des Logs, folgt automatisch; „Log-Ordner öffnen“
   zeigt den Ordner.
+- **Statistik** (jedes Mitglied): je Mitglied die Spielzeit (Zeit auf dem
+  Server), die Hostzeit (Zeit, in der er den Server bereitgestellt hat), die
+  Zahl der Host-Sitzungen und sein Anteil an der gesamten Hostzeit als Balken
+  („wer trägt es“). Mit „Gesamt“ und „Letzte 30 Tage“ wechselst du den
+  Zeitraum. Die Zeiten sind auf etwa 10 Sekunden je Beitritt, Austritt und
+  Hostbeginn genau; fällt ein Host aus, zählt nur die Zeit bis zu seinem
+  letzten Lebenszeichen. Gezählt wird ab dem Update auf diese Version, davor
+  gibt es nichts. Es werden nur Zeiten und Zähler je Mitglied gespeichert
+  (Minecraft-Name wie in der Mitgliederliste), nichts zu IP, Hardware, Chat
+  oder Position.
+- **Zustand** (nur Admins, letzter Reiter): was du sonst per SSH im Log des
+  Servers nachsiehst. Oben die Ampel (OK, Warnung, Fehler) mit „Aktualisieren“,
+  darunter die Warnungen, dann Karten mit Koordinator-Version und Laufzeit,
+  Speicherplatz und Größe des Speichers, Weltstand (Stand, Zeit des letzten
+  Uploads), aktuellem Host (letztes Lebenszeichen), den Starter-Versionen der
+  zuletzt gesehenen PCs, offenen Beitrittsanfragen, Wartung, letzter Sicherung
+  und dem letzten Aufräumen. Der Reiter aktualisiert sich alle 30 s, solange er
+  offen ist. Ein älterer Koordinator ohne `GET /v1/health` zeigt „zu alt“.
 
 ### Mehrere Gruppen
 
@@ -135,13 +153,48 @@ den Ordner der Gruppe (nichts wird gelöscht; geht das nicht, bleibt alles wie
 es war, und es gibt weiter nur eine Gruppe). Der Link `wanderwelt://beitreten`
 öffnet bei mehreren Gruppen den Reiter „Entdecken“.
 
+### Mehrere Welten
+
+Eine Gruppe kann mehrere Welten haben (zum Beispiel „Survival“ und
+„Creative“). **Es läuft immer nur eine Welt**: ein Host, ein Zuschlag, ein
+Minecraft-Port.
+
+- Sobald die Gruppe zwei oder mehr Welten hat, zeigt der Reiter **Start** die
+  Karte „Welt“ mit einem Knopf je Welt. Gespielt wird die Welt, die gerade
+  läuft („Läuft gerade: <Name>“); hostet niemand, die gewählte (sonst die
+  erste). Gewählt wird nur, solange niemand hostet; die Wahl gilt nur auf
+  deinem PC.
+- **Nur Admins** legen Welten an, benennen sie um, ändern Spielmodus
+  (Überleben, Kreativ, Abenteuer) und Schwierigkeit (Friedlich, Leicht,
+  Normal, Schwer) und löschen sie: Reiter **Welt**, Karte „Welten verwalten“.
+  Der Host schreibt Spielmodus und Schwierigkeit vor jedem Start in die
+  `server.properties`; „Gruppenstandard“ lässt `world_settings` des
+  Koordinators gelten. Der Spielmodus gilt für neue Spieler; wer schon in der
+  Welt gespielt hat, behält seinen gespeicherten Modus. Mods, Datenpakete und
+  Gamerules sind Sache der jeweiligen Welt.
+- Jede Welt hat ihren **eigenen Stand und Verlauf**; Inventare und Spieler-IDs
+  liegen in der Welt und werden nie zwischen Welten vermischt. Whitelist und
+  Ops gelten für die ganze Gruppe.
+- **Löschen** geht nur, wenn die Welt nicht läuft, nur mit Rückfrage und nie
+  für die letzte Welt. Die Stände bleiben auf dem Koordinator liegen; erst
+  das Aufräumen nimmt sie unter Platzdruck als Erste weg.
+- Eine neue Welt ist leer. Den ersten Start macht ein Admin: Minecraft legt
+  die Welt frisch an, der erste Zwischenstand füllt sie. „Welt übernehmen“ ersetzt die
+  gerade gewählte Welt (die bisherige bleibt als Archiv der Welt).
+- Auf dem PC liegt die erste Welt wie bisher im Gruppenordner (`server\`),
+  jede weitere in `gruppen\<Gruppe>\welten\<w2, w3 …>\` mit eigenem
+  Server-Ordner, Zustand und `verworfen-*`; die Notfallkopie jeder Welt hat
+  einen eigenen Ordner (`wanderwelt-Notfallkopie[-<Gruppe>]-<Welt>`, die erste
+  Welt behält den bisherigen Namen).
+
 ### Rollen
 
 - **Mitglied**: spielen und hosten.
 - **Op**: wird im Minecraft-Server als Operator eingetragen und darf Befehle
   wie `/gamemode` benutzen.
 - **Admin**: alles oben Genannte plus Stände zurückholen, das Speicherbudget
-  setzen und die Rollen der anderen ändern (Reiter Mitglieder).
+  setzen, Welten verwalten und die Rollen der anderen ändern (Reiter
+  Mitglieder).
 
 Admin- und Op-Schalter wirken live: Ein laufender Server gleicht sich danach
 an. Das letzte Admin-Mitglied kann sich das Admin-Recht nicht selbst nehmen.
@@ -435,7 +488,7 @@ startet. Es spricht über die lokale Steuerung mit der laufenden Instanz
 (127.0.0.1, Token aus `control.json`) und hat keine eigene Logik fürs Hosten:
 Aktionen lösen dieselben Wege aus wie das Tray-Menü. Schließt man es, gibt es
 allen Speicher frei; ein Absturz des Fensters hat keinen Einfluss auf Server,
-Stände oder Zuschlag. Die Reiter (Start, Welt, Hosten, Entdecken, Mitglieder, Log) sind
+Stände oder Zuschlag. Die Reiter (Start, Welt, Hosten, Entdecken, Mitglieder, Log, Statistik) sind
 im Abschnitt „Für Mitspieler“ beschrieben.
 
 ### Hosten übergeben
@@ -589,10 +642,46 @@ wanderwelt-koordinator wartung ende
   als echte Kopie, dazu `<ziel>/konfiguration/`. Das Ziel muss auf demselben
   Dateisystem liegen. Rückweg: Dienst stoppen, altes Programm zurück,
   `data_dir` wegsichern und die Sicherung als `data_dir` einsetzen.
+- Nach gelungener Sicherung schreibt der Befehl `<data_dir>/sicherung.json`
+  (`{"zeit": …, "ziel": …}`, Zeit in UTC) und aktualisiert sie bei jeder
+  weiteren; die Gesundheit (nächster Abschnitt) liest sie. Ohne die Datei gilt
+  die letzte Sicherung als „unbekannt“.
 - Der Speicher trägt seine Format-Version (`store/format.json`). Beim Start
   laufen ausstehende Migrationen vorwärts (nur Metadaten, nie Blobs); eine
   unbekannte neuere Version startet nicht – dann das neuere Programm oder die
   Sicherung davor benutzen.
+- **Format 2 (mehrere Welten):** Der erste Start des neuen Koordinators
+  schreibt `store/current.json` zur Weltliste um. **Vorher `sicherung`
+  machen** – ein altes Programm startet auf Format 2 nicht mehr. Die
+  bisherige Welt wird Welt `w1` („Welt“) mit derselben Weltkennung und
+  denselben Ständen; Archive gehören zu ihr; die alte Datei bleibt als
+  `store/current.json.format1` daneben. Koordinator vor den Startern
+  aktualisieren; ältere Starter spielen die erste Welt und bekommen „denied“
+  mit dem Namen der laufenden Welt, wenn eine andere läuft.
+
+### Gesundheit (nur Admins)
+
+`GET /v1/health` (nur Admins, sonst 403) liefert, wofür man sonst ins Log
+schaut; das Fenster zeigt es im Reiter „Zustand“. Der Koordinator rechnet die
+Warnungen selbst (Paket `internal/koord/gesundheit`), jede mit Stufe `info`,
+`warnung` oder `fehler` und deutschem Text; die Ampel (`status`: `ok`,
+`warnung`, `fehler`) ist die höchste Stufe, `info` zählt als OK.
+
+- Werte: Version (`-X main.version`, im Release gesetzt, sonst „dev“) und
+  Laufzeit; Speicherplatz des Dateisystems von `data_dir` (frei/gesamt; unter
+  Linux per `statfs`, sonst unbekannt) und Größe des Speichers; Weltstand
+  (Head, Zeit des letzten Uploads); Host mit Zeit des letzten Lebenszeichens;
+  Starter-Version je gesehenem PC (kommt mit Lebenszeichen und Bereitschaft,
+  nur im Speicher, nach einem Neustart füllt sie sich neu; ältere Starter
+  senden sie nicht); offene Beitrittsanfragen; Wartung; letzte Sicherung
+  (`sicherung.json`); Ergebnis des letzten Aufräumlaufs seit dem Start (bei
+  Wartung als Probe).
+- Warnungen: freier Speicher unter 5 GB (Fehler) bzw. unter 15 % (Warnung);
+  letzte Sicherung älter als 7 Tage oder unbekannt (Warnung); Host ohne
+  Lebenszeichen seit über 25 s (Warnung) bzw. über 2 Minuten (Fehler); Starter
+  älter als `starter:` im Manifest (Hinweis); offene Beitrittsanfragen
+  (Hinweis); fehlgeschlagenes Aufräumen (Fehler); Speicher trotz Aufräumen über
+  dem Budget (Warnung).
 
 ### Host-Übergabe
 
@@ -690,7 +779,7 @@ Im Dauerbetrieb (siehe dort) endet eine Sitzung mangels Spielern nie.
 ### Aufbewahrung der Stände
 
 Aufgeräumt wird jede Stunde und nach jeder Änderung des Speicherbudgets. Für
-die aktive Welt bleiben:
+jede Welt der Gruppe (ihre aktuelle Weltkennung) bleiben:
 
 - die letzten 24 Stände, immer (bei 5 Minuten Abstand etwa zwei Stunden),
 - für jede der letzten 48 UTC-Stunden der letzte Stand dieser Stunde,
@@ -707,6 +796,34 @@ Budget, meldet das Fenster „über dem Budget“. Angefangene Uploads, an denen
 
 Budget ändern: Fenster, Reiter Welt (nur Admins), mindestens 1 GiB und
 höchstens belegt plus frei auf dem Server.
+
+### Mehrere Welten (Koordinator)
+
+Die Weltliste steht in `store/current.json` (Format 2): je Welt Kennung `w<N>`
+(nie wiederverwendet), Name, `gamemode`, `difficulty`, die aktuelle
+Weltkennung des Speichers (`store_world`) mit Head, die früheren Weltkennungen
+(`previous`) und bei gelöschten Welten `deleted`. `worlds/<Weltkennung>/…` und
+`blobs/` bleiben unverändert. Der Zuschlag (`lease.json`) trägt die Welt
+(`world`); ohne Angabe gilt die erste Welt.
+
+- `GET /v1/worlds` (Mitglieder): `{"worlds": […], "running": "w1"}`; der
+  Status trägt dieselbe Liste (`worlds`, `running_world`). `POST /v1/worlds`
+  `{"name", "gamemode", "difficulty"}`, `PATCH /v1/worlds/{id}` und
+  `DELETE /v1/worlds/{id}?confirm=<Name>` nur für Admins (403 sonst). Löschen
+  scheitert mit 409, solange die Welt läuft (Zuschlag, auch zum Hochladen,
+  wartender Zuschlag, Zurückholen) und für die letzte Welt. Namen: 1–40
+  Zeichen, je Gruppe eindeutig.
+- `POST /v1/play` nimmt `group_world` (ohne Angabe: erste Welt). Eine andere
+  Welt als die laufende ergibt `denied` mit Grund, ebenso eine leere Welt für
+  Nicht-Admins. `GET /v1/generations/head?world=<id>` liefert den Head einer
+  Welt, ohne Angabe den der ersten.
+- Aufbewahrung: Jede Welt der Liste wird wie die bisherige aktive Welt
+  behandelt; gelöschte Welten zählen als Archive, die beim Budget zuerst
+  fallen.
+- Zurückholen aus einem Archiv bindet die zugehörige Welt wieder an diese
+  Weltkennung; für eine gelöschte Welt ist es 409.
+- `wanderwelt-koordinator world activate --world <Weltkennung>` bindet ebenso
+  eine archivierte Weltkennung wieder an ihre Welt.
 
 ### Stände zurückholen
 
@@ -729,8 +846,8 @@ erneutes Zurückholen macht es rückgängig.
 - Während ein Zurückholen aussteht, lehnt der Koordinator Spielanfragen mit
   „Stand wird gerade zurückgeholt, gleich nochmal“ ab und ein zweites
   Zurückholen mit 409. Auch während einer Host-Übergabe gibt es 409.
-- Stände aus einem Archiv: Der neue Stand macht deren Welt wieder zur aktiven;
-  die bisher aktive wird Archiv.
+- Stände aus einem Archiv: Der neue Stand macht deren Weltkennung wieder zur
+  aktuellen ihrer Welt; die bisherige wird Archiv dieser Welt.
 - Die Minecraft-Version des Stands muss zum Manifest passen (sonst 409). Ein
   unbekannter Stand ergibt 404.
 - Ein ausstehendes Zurückholen steht nur im Speicher; siehe „Koordinator
@@ -1070,6 +1187,34 @@ nimmt den Spieler ohne Neustart in die Whitelist auf. Die tunnel-Freischaltung
 des Kontos bleibt Sache des Admins im tunneld-Admin-Panel. Anfragen und
 angenommene Mitglieder überstehen einen Neustart; beim Neuladen werden die
 Dateien neu gelesen.
+
+### Statistik
+
+`GET /v1/stats` (jedes Mitglied, sonst 403) liefert je Mitglied (Minecraft-Name,
+nie die E-Mail) `play_s`, `host_s`, `host_sessions` und `host_share` (Anteil an
+der Hostzeit aller Mitglieder, 0 bis 1), für `total` und `last_30_days`
+(heute und die 29 Tage davor, Tage nach UTC); `since` nennt, seit wann gezählt
+wird. Der Koordinator zählt bei jedem Lebenszeichen (alle 10 s) des
+Haupt-Zuschlags: Hostzeit für den Host, Spielzeit für jeden Namen aus der
+Spielerliste, dazu je Zuschlag eine Sitzung. Ungenauigkeit: bis etwa 10 s je
+Beitritt, Austritt und Hostbeginn (Trapezregel, im Mittel genau). Es zählt nie
+mehr als zwischen zwei Lebenszeichen höchstens 30 s auseinander liegt: Stirbt
+ein Host, endet die Zählung mit seinem letzten Lebenszeichen (die 90 s bis zum
+Ablauf des Zuschlags zählen nicht); nach einem Neustart des Koordinators
+beginnt sie mit dem nächsten Lebenszeichen neu (die Zeit dazwischen fehlt, die
+Sitzung zählt nicht doppelt). Bei einer Übergabe zählt der wartende Zuschlag
+nicht, erst der beförderte ab seinem ersten Lebenszeichen als Haupt-Zuschlag.
+Ein Zuschlag nur zum Hochladen zählt nicht.
+
+Die Zahlen liegen in `<data_dir>/stats.json` (atomar geschrieben, höchstens
+einmal je Minute und beim Beenden; ein Absturz verliert bis zu eine Minute):
+Tageswerte je Mitglied für die letzten 45 Tage, ältere Tage nur als Summe je
+Mitglied, damit die Datei klein bleibt (unter 100 kB). Schlüssel ist die
+E-Mail (klein), damit eine Namensänderung die Zahlen nicht trennt; die Datei
+verlässt den Server nicht. Ausgetretene Mitglieder bleiben in der Datei, aber
+nicht in der Antwort und nicht im Anteil. Eine kaputte Datei wird als
+`stats.json.kaputt-<Zeit>` beiseitegelegt, die Zählung beginnt leer. Löschen
+der Datei setzt die Statistik zurück (bei gestopptem Koordinator).
 
 ### Weitere Gruppe anlegen (Betreiber)
 

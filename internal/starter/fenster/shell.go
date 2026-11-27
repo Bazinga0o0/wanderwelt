@@ -40,7 +40,7 @@ const (
 	inhaltBreite = 860
 )
 
-var reiterNamen = [anzahlReiter]string{"Start", "Welt", "Hosten", "Entdecken", "Mitglieder", "Log"}
+var reiterNamen = [anzahlReiter]string{"Start", "Welt", "Hosten", "Entdecken", "Mitglieder", "Log", "Statistik", "Zustand"}
 
 type sichtbarerHinweis struct {
 	art  string // "info" | "fehler"
@@ -80,6 +80,8 @@ type oberflaeche struct {
 	hosten hostenAnsicht
 	mitgl  mitgliederAnsicht
 	log    logAnsicht
+	stat   statistikAnsicht
+	zust   zustandAnsicht
 
 	gruppen gruppenAuswahl
 	entd    entdeckenAnsicht
@@ -95,6 +97,7 @@ func neueOberflaeche(th *thema, d *daten) *oberflaeche {
 	u.mitgl.liste.Axis = layout.Vertical
 	u.entd.liste.Axis = layout.Vertical
 	u.log.liste.Axis = layout.Vertical
+	u.stat.liste.Axis = layout.Vertical
 	u.log.liste.ScrollToEnd = true
 	return u
 }
@@ -126,7 +129,7 @@ func (u *oberflaeche) layout(gtx layout.Context) layout.Dimensions {
 		u.zeigeEntdeckenGesehen = z.ZeigeEntdecken
 	}
 	admin := z != nil && z.Me != nil && z.Me.Admin
-	if u.reiter == reiterMitglieder && !admin {
+	if nurAdmin(u.reiter) && !admin {
 		u.reiter = reiterStart
 	}
 	// Bei offener Rückfrage ist alles darunter gesperrt, auch für die
@@ -136,7 +139,7 @@ func (u *oberflaeche) layout(gtx layout.Context) layout.Dimensions {
 		haupt = gtx.Disabled()
 	}
 	for i := range u.tabs {
-		if u.tabs[i].Clicked(haupt) && (reiter(i) != reiterMitglieder || admin) {
+		if u.tabs[i].Clicked(haupt) && (!nurAdmin(reiter(i)) || admin) {
 			u.reiter = reiter(i)
 		}
 	}
@@ -291,7 +294,7 @@ func (u *oberflaeche) reiterLeiste(gtx layout.Context, admin bool) layout.Dimens
 	var kinder []layout.FlexChild
 	for i := range u.tabs {
 		r := reiter(i)
-		if r == reiterMitglieder && !admin {
+		if nurAdmin(r) && !admin {
 			continue
 		}
 		kinder = append(kinder, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -355,6 +358,10 @@ func (u *oberflaeche) inhalt(gtx layout.Context, s schnappschuss, admin bool) la
 		return u.mitgl.layout(gtx, u, s)
 	case reiterLog:
 		return u.log.layout(gtx, u, s)
+	case reiterStatistik:
+		return u.stat.layout(gtx, u, s)
+	case reiterZustand:
+		return u.zust.layout(gtx, u, s)
 	}
 	return u.start.layout(gtx, u, s)
 }

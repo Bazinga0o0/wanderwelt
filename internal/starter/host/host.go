@@ -314,7 +314,14 @@ type Deps struct {
 	TunnelCmd func(ctx context.Context) *exec.Cmd
 
 	// Dir ist der Server-Ordner (Welt in Dir/world); leer: DefaultDir().
+	// Bei mehreren Welten der Ordner der Welt dieses Zuschlags
+	// (group.ServerDir), und State ist der Zustand dieser Welt.
 	Dir string
+	// Fresh: Die Welt der Gruppe hat noch keinen Stand (Antwort „leer“ auf
+	// Play; nur ein Admin wird Host). Statt einer Welt zu laden, lässt die
+	// Sitzung Minecraft die Welt frisch anlegen; der erste Stand füllt die
+	// Welt auf dem Koordinator (Basis ""/0).
+	Fresh bool
 	// Group: tunnel_server und Token für Dir()/tunnel.yaml.
 	Group *group.Group
 	// State wird fortgeschrieben (LastUploaded…, PendingUpload) und
@@ -411,6 +418,9 @@ type Committed struct {
 	WorldID          string
 	Generation       int64
 	MinecraftVersion string
+	// GroupWorld: die Welt der Gruppe, zu der der Stand gehört ("": keine
+	// angegeben, ältere Koordinatoren).
+	GroupWorld string
 	// Handover: Es war der Übergabe-Stand (nicht ein Zwischen- oder
 	// Schluss-Stand).
 	Handover bool
@@ -660,7 +670,7 @@ func (s *Session) restage(ctx context.Context) error {
 func (s *Session) noteStaged(b baseRef) {
 	s.emMu.Lock()
 	s.committed = &Committed{
-		Dir: s.staging, WorldID: b.world, Generation: b.gen,
+		Dir: s.staging, WorldID: b.world, Generation: b.gen, GroupWorld: s.d.Client.World(),
 		MinecraftVersion: s.d.MinecraftVersion, At: s.clk.Now(), NotUploaded: true,
 	}
 	s.emMu.Unlock()
@@ -671,7 +681,7 @@ func (s *Session) noteStaged(b baseRef) {
 func (s *Session) noteCommitted(g *api.Generation, handover bool) {
 	s.emMu.Lock()
 	s.committed = &Committed{
-		Dir: s.staging, WorldID: g.WorldID, Generation: g.Number,
+		Dir: s.staging, WorldID: g.WorldID, Generation: g.Number, GroupWorld: s.d.Client.World(),
 		MinecraftVersion: s.d.MinecraftVersion, Handover: handover, At: s.clk.Now(),
 	}
 	s.emMu.Unlock()
@@ -1090,6 +1100,13 @@ func (s *Session) startupOp(ctx context.Context) (r startResult) {
 		r.err = fmt.Errorf("Stand der Welt abfragen: %w", err)
 		return r
 	}
+	// Eine Welt ohne Stand (frisch angelegt): nichts zu laden, Minecraft legt
+	// sie an; der erste Stand füllt sie auf dem Koordinator (Basis ""/0).
+	fresh := false
+	if head == nil && s.d.Fresh {
+		head, fresh = &api.Generation{}, true
+		log.Printf("host: die Welt hat noch keinen Stand – Minecraft legt sie frisch an")
+	}
 	if head == nil {
 		r.err = errors.New("auf dem Koordinator gibt es noch keine Welt (erst „Welt übernehmen …“)")
 		return r
@@ -1131,7 +1148,19 @@ func (s *Session) startupOp(ctx context.Context) (r startResult) {
 			}
 		}
 	}
-	if !keepLocal {
+	if !keepLocal && fresh {
+		// Ein alter lokaler Stand dieser noch leeren Welt (ein früherer, nie
+		// eingereichter Anfang) wird beiseitegelegt, damit Minecraft eine
+		// frische Welt anlegt.
+		dest, err := discardWorld(s.world)
+		if err != nil {
+			r.err = err
+			return r
+		}
+		if dest != "" {
+			log.Printf("host: alter lokaler Stand einer noch leeren Welt beiseitegelegt nach %s", dest)
+		}
+	} else if !keepLocal {
 		// Download nie gleichzeitig mit einem Stand (syncSlot). Hier läuft
 		// noch kein Zwischenstand dieser Sitzung: Die starten erst, wenn der
 		// Server läuft.

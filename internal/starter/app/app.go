@@ -169,7 +169,8 @@ type App struct {
 	mu        sync.Mutex
 	g         *group.Group
 	c         *client.Client
-	st        *group.State // gehört während einer Host-Sitzung host.Run
+	st        *group.State            // der Zustand der Gruppe (erste Welt); gehört während einer Host-Sitzung host.Run
+	wstates   map[string]*group.State // Zustand der weiteren Welten (Ordner|Kennung), siehe worldState
 	machineID string
 	me        *api.Me
 	status    *api.Status
@@ -286,6 +287,7 @@ func Run(opts Options) int {
 		// Ein kaputter Gruppen-Build verhält sich wie ein Build ohne Adressen.
 		log.Printf("%v", err)
 	}
+	client.SetStarterVersion(opts.Version)
 	a := &App{
 		version:   opts.Version,
 		invite:    inv,
@@ -829,23 +831,48 @@ func (a *App) recoverAtStart() {
 		return
 	}
 	a.mu.Lock()
-	st, c := a.st, a.c
+	c := a.c
 	a.mu.Unlock()
+	// Jede Welt dieser Gruppe, die es lokal gibt, mit ihrem eigenen Ordner und
+	// Zustand (nie ein Stand in eine andere Welt).
+	targets := a.recoverWorlds(c)
+	type outcome struct {
+		err     error
+		pending bool
+		notes   recoverNotes
+	}
 	run := func() {
-		var notes recoverNotes
-		err := recoverWorld(a.ctx, c, st, "", a.hc, notes.add)
-		pending := st.PendingUpload
+		outs := make([]outcome, len(targets))
+		for i, wc := range targets {
+			outs[i].err = recoverWorld(a.ctx, wc.C, wc.St, wc.Dir, a.hc, outs[i].notes.add)
+			outs[i].pending = wc.St.PendingUpload
+		}
 		a.releaseWorld()
-		if a.handleRecover(err, pending, notes) {
+		retry := false
+		for _, o := range outs {
+			if a.handleRecover(o.err, o.pending, o.notes) {
+				retry = true
+			}
+		}
+		if retry {
 			a.startRecoverLoop()
 		}
 	}
-	_, markerErr := os.Lstat(filepath.Join(host.DefaultDir(), host.MarkerName))
-	if !st.PendingUpload && errors.Is(markerErr, fs.ErrNotExist) {
+	work, pending := false, false
+	for _, wc := range targets {
+		_, markerErr := os.Lstat(filepath.Join(wc.Dir, host.MarkerName))
+		if wc.St.PendingUpload {
+			work, pending = true, true
+		}
+		if !errors.Is(markerErr, fs.ErrNotExist) {
+			work = true
+		}
+	}
+	if !work {
 		run() // nichts nachzureichen oder aufzuräumen: sofort fertig
 		return
 	}
-	if st.PendingUpload {
+	if pending {
 		go notify("Der letzte Stand dieses PCs wird nachgereicht …")
 	}
 	go run()
@@ -954,17 +981,36 @@ func (a *App) startRecoverLoop() {
 				continue // hostet oder lädt gerade
 			}
 			a.mu.Lock()
-			st, c := a.st, a.c
+			c := a.c
 			a.mu.Unlock()
-			if !st.PendingUpload {
+			var todo []worldCtx
+			for _, wc := range a.recoverWorlds(c) {
+				if wc.St.PendingUpload {
+					todo = append(todo, wc)
+				}
+			}
+			if len(todo) == 0 {
 				a.releaseWorld()
 				return
 			}
-			var notes recoverNotes
-			err := recoverWorld(a.ctx, c, st, "", a.hc, notes.add)
-			pending := st.PendingUpload
+			again := false
+			type outcome struct {
+				err     error
+				pending bool
+				notes   recoverNotes
+			}
+			outs := make([]outcome, len(todo))
+			for i, wc := range todo {
+				outs[i].err = recoverWorld(a.ctx, wc.C, wc.St, wc.Dir, a.hc, outs[i].notes.add)
+				outs[i].pending = wc.St.PendingUpload
+			}
 			a.releaseWorld()
-			if !a.reportRecover(err, pending, notes, true) {
+			for _, o := range outs {
+				if a.reportRecover(o.err, o.pending, o.notes, true) {
+					again = true
+				}
+			}
+			if !again {
 				return
 			}
 		}
@@ -1014,6 +1060,13 @@ func (a *App) prefetch() {
 		if _, err := os.Stat(filepath.Join(dir, host.MarkerName)); err == nil {
 			log.Printf("Vorladen: Markierungsdatei vorhanden – nicht vorladen")
 			return
+		}
+		// Vorgeladen wird die erste Welt (w1: sie liegt in Dir()\server, wie
+		// schon immer). Auf einem Koordinator mit Welten gilt dafür w1
+		// ausdrücklich (gibt es sie nicht mehr, ist der Head leer und nichts
+		// wird vorgeladen); ältere Koordinatoren bekommen keine Weltangabe.
+		if as := a.statusFresh(ctx, c); as != nil && len(as.Worlds) > 0 {
+			c = c.ForWorld(group.FirstWorld)
 		}
 		head, err := retry401(ctx, func() (*api.Generation, error) { return c.Head(ctx) })
 		if err != nil {

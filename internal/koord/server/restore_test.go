@@ -503,8 +503,8 @@ members:
 			Players: []string{"Alice", "Bob"}, Size: 16, MinecraftVersion: manifestMC}
 	}
 	want := []api.WorldInfo{
-		{WorldID: a2.WorldID, Active: true, Generations: []api.GenerationInfo{info(b3, "Bob"), info(a2, "Alice")}},
-		{WorldID: a1.WorldID, Generations: []api.GenerationInfo{info(a1, "Alice")}},
+		{WorldID: a2.WorldID, Active: true, GroupWorld: "w1", GroupName: "Welt", Generations: []api.GenerationInfo{info(b3, "Bob"), info(a2, "Alice")}},
+		{WorldID: a1.WorldID, GroupWorld: "w1", GroupName: "Welt", Generations: []api.GenerationInfo{info(a1, "Alice")}},
 	}
 	if got, w := mustJSON(t, resp.Worlds), mustJSON(t, want); got != w {
 		t.Fatalf("Welten:\n%s\nerwartet\n%s", got, w)

@@ -5,6 +5,7 @@ package client
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -80,6 +81,32 @@ type Client struct {
 	token string
 	email string
 	http  *http.Client
+	// world: die Welt der Gruppe, auf die sich Head und Play beziehen ("":
+	// keine angeben – ältere Koordinatoren und „die erste Welt“). Siehe
+	// ForWorld.
+	world string
+}
+
+// ForWorld liefert einen Client für die Welt id der Gruppe: Head und Play
+// (auch das Nachreichen) beziehen sich dann auf diese Welt. Er teilt
+// Verbindung und Zugangsdaten mit c. id "" gibt einen Client ohne Weltangabe
+// (wie vor den Welten). Nur für Koordinatoren mit Weltliste benutzen: Ein
+// älterer lehnt das Feld ab.
+func (c *Client) ForWorld(id string) *Client {
+	if c == nil {
+		return nil
+	}
+	n := *c
+	n.world = id
+	return &n
+}
+
+// World ist die Welt, für die der Client gilt ("": keine angegeben).
+func (c *Client) World() string {
+	if c == nil {
+		return ""
+	}
+	return c.world
 }
 
 // New baut einen Client für die Gruppe g. Jede Anfrage trägt
@@ -152,6 +179,9 @@ func (c *Client) Artifact(ctx context.Context, name string) (body io.ReadCloser,
 // Play meldet den Wunsch zu spielen (POST /v1/play). Kann bis zum Ende des
 // Sammelfensters (etwa 5 s) blockieren.
 func (c *Client) Play(ctx context.Context, req api.PlayRequest) (*api.PlayResponse, error) {
+	if req.GroupWorld == "" {
+		req.GroupWorld = c.world
+	}
 	var out api.PlayResponse
 	if err := c.call(ctx, callTimeout, http.MethodPost, "/v1/play", req, &out); err != nil {
 		return nil, err
@@ -168,6 +198,7 @@ func (c *Client) Play(ctx context.Context, req api.PlayRequest) (*api.PlayRespon
 // trotzdem angekommen – kein Fehler (der führte beim Host zum Fencing),
 // sondern nil, nil und eine Zeile im Log.
 func (c *Client) Heartbeat(ctx context.Context, req api.HeartbeatRequest) (*api.HeartbeatResponse, error) {
+	req.StarterVersion = cmp.Or(req.StarterVersion, StarterVersion())
 	ctx, cancel := context.WithTimeout(ctx, callTimeout)
 	defer cancel()
 	b, err := json.Marshal(req)
@@ -220,6 +251,7 @@ var ErrHandoverBusy = errors.New("Übergabe läuft schon")
 // (POST /v1/presence). Die Antwort trägt ein Übergabe-Angebot, wenn der
 // Koordinator diesen PC als neuen Host gewählt hat.
 func (c *Client) Presence(ctx context.Context, req api.PresenceRequest) (*api.PresenceResponse, error) {
+	req.StarterVersion = cmp.Or(req.StarterVersion, StarterVersion())
 	var out api.PresenceResponse
 	if err := c.call(ctx, callTimeout, http.MethodPost, "/v1/presence", req, &out); err != nil {
 		return nil, err
@@ -533,7 +565,11 @@ func (c *Client) GetBlob(ctx context.Context, sha string, w io.Writer) error {
 // noch keine Welt (404), ist das Ergebnis nil, nil.
 func (c *Client) Head(ctx context.Context) (*api.Generation, error) {
 	var out api.Generation
-	err := c.call(ctx, callTimeout, http.MethodGet, "/v1/generations/head", nil, &out)
+	path := "/v1/generations/head"
+	if c.world != "" {
+		path += "?world=" + url.QueryEscape(c.world)
+	}
+	err := c.call(ctx, callTimeout, http.MethodGet, path, nil, &out)
 	if se, ok := errors.AsType[*StatusError](err); ok && se.StatusCode == http.StatusNotFound {
 		return nil, nil
 	}
@@ -757,6 +793,15 @@ func (c *Client) Members(ctx context.Context) ([]api.MemberInfo, error) {
 	return out, nil
 }
 
+// Stats holt die Statistik (GET /v1/stats; jedes Mitglied).
+func (c *Client) Stats(ctx context.Context) (*api.Stats, error) {
+	var out api.Stats
+	if err := c.call(ctx, callTimeout, http.MethodGet, "/v1/stats", nil, &out); err != nil {
+		return nil, notSupported(err, true)
+	}
+	return &out, nil
+}
+
 // SetRole setzt Admin- und Op-Recht des Mitglieds email
 // (PUT /v1/members/{email}; nur Admins). 404 mit eigener Meldung: kein
 // Mitglied; 409: danach gäbe es keinen Admin mehr.
@@ -818,4 +863,40 @@ func (c *Client) SetMyMinecraft(ctx context.Context, name string) error {
 		return fmt.Errorf("%w: %w", ErrNameAlreadySet, err)
 	}
 	return err
+}
+
+// Worlds holt die Weltliste der Gruppe (GET /v1/worlds). Ein älterer
+// Koordinator ohne Welten antwortet 404: ErrNotSupported.
+func (c *Client) Worlds(ctx context.Context) (*api.WorldList, error) {
+	var out api.WorldList
+	if err := c.call(ctx, callTimeout, http.MethodGet, "/v1/worlds", nil, &out); err != nil {
+		return nil, notSupported(err, true)
+	}
+	return &out, nil
+}
+
+// CreateWorld legt eine Welt an (POST /v1/worlds; nur Admins).
+func (c *Client) CreateWorld(ctx context.Context, req api.WorldCreate) (*api.GroupWorld, error) {
+	var out api.GroupWorld
+	if err := c.call(ctx, callTimeout, http.MethodPost, "/v1/worlds", req, &out); err != nil {
+		return nil, notSupported(err, true)
+	}
+	return &out, nil
+}
+
+// UpdateWorld ändert Name und Eigenschaften der Welt id
+// (PATCH /v1/worlds/{id}; nur Admins).
+func (c *Client) UpdateWorld(ctx context.Context, id string, patch api.WorldPatch) (*api.GroupWorld, error) {
+	var out api.GroupWorld
+	if err := c.call(ctx, callTimeout, http.MethodPatch, "/v1/worlds/"+url.PathEscape(id), patch, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// DeleteWorld löscht die Welt id (DELETE /v1/worlds/{id}; nur Admins).
+// confirm ist der Name der Welt (Bestätigung). 409: die Welt läuft gerade
+// oder ist die letzte.
+func (c *Client) DeleteWorld(ctx context.Context, id, confirm string) error {
+	return c.call(ctx, callTimeout, http.MethodDelete, "/v1/worlds/"+url.PathEscape(id)+"?confirm="+url.QueryEscape(confirm), nil, nil)
 }

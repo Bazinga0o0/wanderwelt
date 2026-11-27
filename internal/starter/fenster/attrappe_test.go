@@ -37,6 +37,7 @@ type attrappe struct {
 	saves     []fensterapi.Speicherstand
 	log       string
 	members   []api.MemberInfo
+	statistik api.Stats
 	fehler    map[string]string // Aktion → {"fehler": …} mit 400
 	beiAktion func(a *attrappe, name string, body []byte)
 	// protokoll (darf nil sein) bekommt jede Anfrage außer /v1/zustand.
@@ -94,6 +95,8 @@ func (a *attrappe) bedienen(w http.ResponseWriter, r *http.Request) {
 			antwort(a.saves)
 		case "/v1/mitglieder":
 			antwort(a.members)
+		case "/v1/statistik":
+			antwort(a.statistik)
 		case "/v1/log":
 			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 			io.WriteString(w, a.log)
@@ -132,6 +135,7 @@ func (a *attrappe) setzeBeispiel(jetzt time.Time, admin bool) {
 	a.saves = beispielSaves(jetzt)
 	a.log = beispielLog(jetzt)
 	a.members = beispielMitglieder()
+	a.statistik = *beispielStatistik(jetzt)
 }
 
 // ---- Beispieldaten ----
@@ -189,6 +193,41 @@ func beispielSaves(jetzt time.Time) []fensterapi.Speicherstand {
 		{Folder: "Inselbau", LevelName: "Inselbau mit Jonas", Version: "26.2", LastPlayed: jetzt.Add(-9 * 24 * time.Hour), Size: 1 << 30, PlayerFile: false},
 		{Folder: "Alt", LevelName: "Alt", Version: "1.21.4", LastPlayed: jetzt.Add(-400 * 24 * time.Hour), Size: 95 << 20, PlayerFile: true,
 			Problem: "„Alt“ ist mit Minecraft 1.21.4 gespeichert. Welten vor 26.1 werden nicht übernommen."},
+	}
+}
+
+// beispielStatistik: vier Mitglieder, eines ohne Hostzeit, eines mit sehr
+// kleinem Anteil; im 30-Tage-Zeitraum trägt ein anderes am meisten.
+func beispielStatistik(jetzt time.Time) *api.Stats {
+	periode := func(ms ...api.MemberStats) api.StatsPeriod {
+		var gesamt int64
+		for _, m := range ms {
+			gesamt += m.HostS
+		}
+		for i := range ms {
+			if gesamt > 0 {
+				ms[i].HostShare = float64(ms[i].HostS) / float64(gesamt)
+			}
+		}
+		return api.StatsPeriod{HostTotalS: gesamt, Members: ms}
+	}
+	h := int64(3600)
+	return &api.Stats{
+		Since: jetzt.Add(-90 * 24 * time.Hour),
+		Total: periode(
+			api.MemberStats{MinecraftName: "Lukas", PlayS: 212*h + 1500, HostS: 140 * h, HostSessions: 61},
+			api.MemberStats{MinecraftName: "Mara", PlayS: 180 * h, HostS: 75*h + 600, HostSessions: 33},
+			api.MemberStats{MinecraftName: "Jonas", PlayS: 95 * h, HostS: 20 * h, HostSessions: 9},
+			api.MemberStats{MinecraftName: "KimTheBuilder", PlayS: 40*h + 30, HostS: 40, HostSessions: 1},
+			api.MemberStats{MinecraftName: "Neuling", PlayS: 0, HostS: 0, HostSessions: 0},
+		),
+		Last30: periode(
+			api.MemberStats{MinecraftName: "Lukas", PlayS: 30 * h, HostS: 6 * h, HostSessions: 5},
+			api.MemberStats{MinecraftName: "Mara", PlayS: 41 * h, HostS: 22 * h, HostSessions: 14},
+			api.MemberStats{MinecraftName: "Jonas", PlayS: 12 * h, HostS: 0, HostSessions: 0},
+			api.MemberStats{MinecraftName: "KimTheBuilder", PlayS: 50, HostS: 0, HostSessions: 0},
+			api.MemberStats{MinecraftName: "Neuling", PlayS: 0},
+		),
 	}
 }
 

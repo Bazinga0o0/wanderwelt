@@ -31,6 +31,11 @@ type PlayRequest struct {
 	UploadOnly     bool   `json:"upload_only"`
 	BaseWorldID    string `json:"base_world_id"`
 	BaseGeneration int64  `json:"base_generation"`
+	// GroupWorld: die gewünschte Welt der Gruppe (GroupWorld.ID); fehlt sie
+	// (älterer Starter), ist es die erste Welt. Ein Starter schickt sie nur,
+	// wenn der Koordinator eine Weltliste kennt (Status.Worlds): Ein
+	// älterer Koordinator lehnt unbekannte Felder ab.
+	GroupWorld string `json:"group_world,omitempty"`
 }
 
 // PlayResponse ist die Antwort auf PlayRequest.
@@ -42,6 +47,60 @@ type PlayResponse struct {
 	Host             *HostInfo `json:"host,omitempty"`
 	MinecraftAddress string    `json:"minecraft_address"`
 	Reason           string    `json:"reason,omitempty"`
+	// GroupWorld und GroupWorldName: die Welt der Gruppe, auf die sich die
+	// Antwort bezieht (bei "denied" wegen einer anderen laufenden Welt die
+	// laufende); HeadGeneration und WorldID sind der Head dieser Welt.
+	// Empty: Die Welt ist noch leer (nur Admins werden Host; der Host lässt
+	// Minecraft sie frisch anlegen).
+	GroupWorld     string `json:"group_world,omitempty"`
+	GroupWorldName string `json:"group_world_name,omitempty"`
+	Empty          bool   `json:"empty,omitempty"`
+}
+
+// Werte von GroupWorld.Gamemode und .Difficulty ("" = nicht festgelegt: es
+// gilt world_settings des Koordinators).
+var (
+	Gamemodes    = []string{"survival", "creative", "adventure"}
+	Difficulties = []string{"peaceful", "easy", "normal", "hard"}
+)
+
+// GroupWorld ist eine Welt der Gruppe (Eintrag der Weltliste). ID ist stabil
+// (w1, w2, …). HeadGeneration/HeadCreated: der neueste Stand der Welt
+// (0 und Nullzeit, solange sie leer ist, Empty). Running: Die Welt läuft
+// gerade (Host oder Sammelfenster).
+type GroupWorld struct {
+	ID             string    `json:"id"`
+	Name           string    `json:"name"`
+	Gamemode       string    `json:"gamemode,omitempty"`
+	Difficulty     string    `json:"difficulty,omitempty"`
+	HeadGeneration int64     `json:"head_generation"`
+	HeadCreated    time.Time `json:"head_created,omitzero"`
+	Empty          bool      `json:"empty,omitempty"`
+	Running        bool      `json:"running,omitempty"`
+}
+
+// WorldList ist die Antwort auf GET /v1/worlds: die Welten in der
+// Reihenfolge der Liste (die erste ist die Standardwelt) und die Kennung
+// der laufenden Welt ("" wenn keine läuft).
+type WorldList struct {
+	Worlds  []GroupWorld `json:"worlds"`
+	Running string       `json:"running,omitempty"`
+}
+
+// WorldCreate legt eine Welt an (POST /v1/worlds, nur Admins).
+type WorldCreate struct {
+	Name       string `json:"name"`
+	Gamemode   string `json:"gamemode,omitempty"`
+	Difficulty string `json:"difficulty,omitempty"`
+}
+
+// WorldPatch ändert eine Welt (PATCH /v1/worlds/{id}, nur Admins); fehlende
+// Felder bleiben unverändert, ein leerer Spielmodus oder eine leere
+// Schwierigkeit heißt „nicht festgelegt“.
+type WorldPatch struct {
+	Name       *string `json:"name,omitempty"`
+	Gamemode   *string `json:"gamemode,omitempty"`
+	Difficulty *string `json:"difficulty,omitempty"`
 }
 
 // HostInfo beschreibt den aktuellen Host.
@@ -59,6 +118,9 @@ type HeartbeatRequest struct {
 	MachineID string   `json:"machine_id"`
 	Players   []string `json:"players"`
 	Ready     bool     `json:"ready"`
+	// StarterVersion: Version des Starters (für die Gesundheit der Admins);
+	// ältere Starter senden sie nicht.
+	StarterVersion string `json:"starter_version,omitempty"`
 }
 
 // ReleaseRequest gibt den Zuschlag zurück.
@@ -99,6 +161,13 @@ type Status struct {
 	// NoDiscordJoin: der Admin hat den Beitritt über Discord ausgeschaltet
 	// (Knopf „Beitreten“ entfällt); fehlendes Feld = erlaubt.
 	NoDiscordJoin bool `json:"no_discord_join,omitempty"`
+	// Worlds: die Welten der Gruppe (Weltliste); RunningWorld: die Welt, die
+	// gerade läuft (Host oder Sammelfenster, "" wenn keine). WorldID und
+	// HeadGeneration oben beschreiben die laufende Welt, sonst die erste.
+	// Ältere Koordinatoren kennen beides nicht: Der Starter verhält sich
+	// dann wie vor den Welten.
+	Worlds       []GroupWorld `json:"worlds,omitempty"`
+	RunningWorld string       `json:"running_world,omitempty"`
 }
 
 // Werte von GroupInfo.You.
@@ -132,6 +201,105 @@ type Maintenance struct {
 	RemainingS int64     `json:"remaining_s"`
 }
 
+// Stufen von HealthWarning.Level.
+const (
+	WarnInfo    = "info"
+	WarnWarnung = "warnung"
+	WarnFehler  = "fehler"
+)
+
+// Werte von Health.Status (Ampel): höchste Stufe der Warnungen, info zählt
+// als ok.
+const (
+	HealthOK      = "ok"
+	HealthWarnung = "warnung"
+	HealthFehler  = "fehler"
+)
+
+// HealthWarning ist eine Warnung der Gesundheit (deutscher Text).
+type HealthWarning struct {
+	Level string `json:"level"` // WarnInfo | WarnWarnung | WarnFehler
+	Text  string `json:"text"`
+}
+
+// HealthDisk: Speicherplatz des Dateisystems von data_dir.
+type HealthDisk struct {
+	FreeBytes  int64 `json:"free_bytes"`
+	TotalBytes int64 `json:"total_bytes"` // 0: unbekannt
+}
+
+// HealthHost: der aktuelle Host (Zuschlag).
+type HealthHost struct {
+	MinecraftName string    `json:"minecraft_name,omitempty"`
+	MachineID     string    `json:"machine_id"`
+	UploadOnly    bool      `json:"upload_only,omitempty"`
+	LastBeat      time.Time `json:"last_beat"` // letztes Lebenszeichen
+}
+
+// HealthStarter: Starter-Version eines zuletzt gesehenen PCs.
+type HealthStarter struct {
+	MinecraftName string    `json:"minecraft_name,omitempty"`
+	MachineID     string    `json:"machine_id"`
+	Version       string    `json:"version"`
+	Seen          time.Time `json:"seen"`
+}
+
+// HealthBackup: letzte Sicherung (data_dir/sicherung.json); fehlt die Datei,
+// ist Known false.
+type HealthBackup struct {
+	Known  bool      `json:"known"`
+	Time   time.Time `json:"time,omitzero"`
+	Target string    `json:"target,omitempty"`
+}
+
+// HealthPrune: Ergebnis des letzten Aufräumlaufs seit dem Start des
+// Koordinators; ohne Lauf nil. Probe: Lauf während einer Wartung (nur
+// gerechnet, nichts gelöscht; dann die Zahlen, was gelöscht würde). Error:
+// der Lauf ist fehlgeschlagen.
+type HealthPrune struct {
+	Time        time.Time `json:"time"`
+	Probe       bool      `json:"probe,omitempty"`
+	Error       string    `json:"error,omitempty"`
+	Generations int       `json:"generations,omitempty"`
+	Blobs       int       `json:"blobs,omitempty"`
+	Bytes       int64     `json:"bytes,omitempty"`
+}
+
+// Health ist die Antwort auf GET /v1/health (nur Admins): was ein Admin
+// sonst im Log des Servers nachsieht.
+type Health struct {
+	Version string    `json:"version"`
+	Started time.Time `json:"started"`
+	UptimeS int64     `json:"uptime_s"`
+	// Disk: nil, wenn der Koordinator den Speicherplatz nicht ermitteln kann.
+	Disk *HealthDisk `json:"disk,omitempty"`
+	// StoreBytes: Größe des Speichers (Blobs aller behaltenen Stände);
+	// StoreKnown false, solange sie nicht ermittelt ist.
+	StoreBytes int64 `json:"store_bytes"`
+	StoreKnown bool  `json:"store_known"`
+	// Weltstand: Head (ohne Welt WorldID leer) und Zeit des letzten Uploads
+	// (= des Heads).
+	WorldID        string    `json:"world_id"`
+	HeadGeneration int64     `json:"head_generation"`
+	HeadCreated    time.Time `json:"head_created,omitzero"`
+	// WorldName: Name der Welt der Gruppe, auf die sich der Weltstand
+	// bezieht (die laufende, sonst die erste); Running: sie läuft gerade.
+	// Worlds: Zahl der Welten der Gruppe.
+	WorldName    string          `json:"world_name,omitempty"`
+	WorldRunning bool            `json:"world_running,omitempty"`
+	Worlds       int             `json:"worlds,omitempty"`
+	Host         *HealthHost     `json:"host,omitempty"`
+	Starters     []HealthStarter `json:"starters,omitempty"`
+	OpenJoins    int             `json:"open_joins"`
+	Maintenance  *Maintenance    `json:"maintenance,omitempty"`
+	Backup       HealthBackup    `json:"backup"`
+	Prune        *HealthPrune    `json:"prune,omitempty"`
+	// ManifestStarter: Starter-Version im Manifest ("" ohne).
+	ManifestStarter string          `json:"manifest_starter,omitempty"`
+	Status          string          `json:"status"` // HealthOK | HealthWarnung | HealthFehler
+	Warnings        []HealthWarning `json:"warnings"`
+}
+
 // Me beschreibt das anfragende Mitglied.
 type Me struct {
 	Email            string `json:"email"`
@@ -142,6 +310,41 @@ type Me struct {
 	// PendingJoins: Zahl der offenen Beitrittsanfragen (nur für Admins,
 	// sonst nicht gesetzt).
 	PendingJoins int `json:"pending_joins,omitempty"`
+}
+
+// Stats ist die Antwort auf GET /v1/stats (jedes Mitglied): Spielzeit,
+// Hostzeit und Host-Sitzungen je Mitglied, gesamt und in den letzten 30
+// Tagen (heute und die 29 Tage davor, Tage nach UTC). Gezählt wird im
+// Takt der Lebenszeichen des Hosts (Genauigkeit etwa 10 s je Beitritt,
+// Austritt und Hostbeginn); Mitglieder heißen wie in der Mitgliederliste
+// (Minecraft-Name, nie E-Mail). Since: seit wann gezählt wird (Null: noch
+// nichts); Daten davor gibt es nicht.
+type Stats struct {
+	Since  time.Time   `json:"since,omitzero"`
+	Total  StatsPeriod `json:"total"`
+	Last30 StatsPeriod `json:"last_30_days"`
+	// RunningWorld: Name der Welt, die gerade läuft ("" wenn keine). Die
+	// Zahlen zählen die ganze Gruppe, nicht je Welt.
+	RunningWorld string `json:"running_world,omitempty"`
+}
+
+// StatsPeriod sind die Zahlen eines Zeitraums. HostTotalS: Summe der
+// Hostzeit aller aufgeführten Mitglieder (Grundlage von MemberStats.HostShare).
+type StatsPeriod struct {
+	HostTotalS int64         `json:"host_total_s"`
+	Members    []MemberStats `json:"members"`
+}
+
+// MemberStats sind die Zahlen eines Mitglieds. PlayS: Zeit auf dem Server,
+// HostS: Zeit mit dem Zuschlag als Host (auch beim Laden der Welt),
+// HostSessions: Zahl der Host-Sitzungen, HostShare: Anteil an der gesamten
+// Hostzeit (0 bis 1; 0 ohne Hostzeit).
+type MemberStats struct {
+	MinecraftName string  `json:"minecraft_name"`
+	PlayS         int64   `json:"play_s"`
+	HostS         int64   `json:"host_s"`
+	HostSessions  int     `json:"host_sessions"`
+	HostShare     float64 `json:"host_share"`
 }
 
 // FileEntry ist eine Datei eines Weltstands. Path ist relativ zum
@@ -319,6 +522,10 @@ type WorldInfo struct {
 	WorldID     string           `json:"world_id"`
 	Active      bool             `json:"active"`
 	Generations []GenerationInfo `json:"generations"` // neueste zuerst
+	// GroupWorld und GroupName: die Welt der Gruppe, zu der diese
+	// Weltkennung gehört (auch als Archiv; leer, wenn unbekannt).
+	GroupWorld string `json:"group_world,omitempty"`
+	GroupName  string `json:"group_name,omitempty"`
 }
 
 // GenerationsResponse ist die Antwort auf GET /v1/generations.
@@ -409,6 +616,8 @@ type PresenceRequest struct {
 	MachineID string `json:"machine_id"`
 	Score     Score  `json:"score"`
 	Joined    bool   `json:"joined,omitempty"` // spielt gerade mit (sonst untätiger Dauerbetrieb)
+	// StarterVersion: Version des Starters (für die Gesundheit der Admins).
+	StarterVersion string `json:"starter_version,omitempty"`
 }
 type PresenceResponse struct {
 	Handover *HandoverOffer `json:"handover,omitempty"`
@@ -419,6 +628,7 @@ type HandoverOffer struct {
 	HandoverID       int64    `json:"handover_id"`
 	LeaseID          int64    `json:"lease_id"`
 	WorldID          string   `json:"world_id"`
+	GroupWorld       string   `json:"group_world,omitempty"` // Welt der Gruppe, die übergeben wird
 	HeadGeneration   int64    `json:"head_generation"`
 	Port             int      `json:"port"` // Ersatz-Port für die übergebenen Spieler
 	From             HostInfo `json:"from"`

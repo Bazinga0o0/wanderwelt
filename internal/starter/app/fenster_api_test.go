@@ -180,6 +180,7 @@ func TestFensterAPIToken(t *testing.T) {
 		{"GET", "/v1/speicherstaende", ""},
 		{"GET", "/v1/log?zeilen=5", ""},
 		{"GET", "/v1/mitglieder", ""},
+		{"GET", "/v1/statistik", ""},
 		{"POST", "/v1/play", ""},
 		{"POST", "/v1/beenden", ""},
 		{"POST", "/v1/import", `{"dir":"C:\\x"}`},

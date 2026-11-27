@@ -60,6 +60,17 @@ func notfallOrdnerName() string {
 	return notfallName + "-" + id
 }
 
+// notfallOrdnerNameFor ist der Ordnername der Notfallkopie der Welt world
+// dieser Gruppe: für die erste Welt (und ohne Weltangabe) der Name der Gruppe
+// wie bisher, für jede weitere Welt mit der Kennung der Welt dahinter – die
+// Kopien verschiedener Welten überschreiben sich nie.
+func notfallOrdnerNameFor(world string) string {
+	if group.DefaultWorld(world) || !group.ValidWorldID(world) {
+		return notfallOrdnerName()
+	}
+	return notfallOrdnerName() + "-" + world
+}
+
 // ---- Auswahl und Wechsel ----
 
 const (

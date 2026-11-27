@@ -33,7 +33,8 @@ func beispielAnsichten(jetzt time.Time) []ansicht {
 			staende: beispielStaende(jetzt), staendeAb: jetzt,
 			saves: beispielSaves(jetzt), savesAb: jetzt,
 			log: beispielLog(jetzt), logAb: jetzt,
-			mitglieder: beispielMitglieder(), mitgliederAb: jetzt}
+			mitglieder: beispielMitglieder(), mitgliederAb: jetzt,
+			statistik: beispielStatistik(jetzt), statistikAb: jetzt}
 	}
 	admin := beispielZustand(jetzt, true, true)
 	gast := beispielZustand(jetzt, false, true)
@@ -73,12 +74,18 @@ func beispielAnsichten(jetzt time.Time) []ansicht {
 	fehler.Phase, fehler.LastErr = "Fehler", "Spielen: Der Koordinator ist nicht erreichbar (Zeitüberschreitung)."
 
 	leer := voll(beispielZustand(jetzt, true, false))
-	leer.staende, leer.saves, leer.log, leer.mitglieder = nil, nil, "", nil
+	leer.staende, leer.saves, leer.log, leer.mitglieder, leer.statistik = nil, nil, "", nil, nil
 	leer.staendeAb, leer.savesAb, leer.logAb, leer.mitgliederAb = time.Time{}, time.Time{}, time.Time{}, time.Time{}
+	leer.statistikAb = time.Time{}
 
 	altKoord := voll(beispielZustand(jetzt, true, false))
 	altKoord.staende, altKoord.staendeErr = nil, "Der Koordinator ist zu alt für diese Ansicht"
 	altKoord.mitglieder, altKoord.mitgliederErr = nil, "Der Koordinator ist zu alt für diese Ansicht"
+	altKoord.statistik, altKoord.statistikErr = nil, "Der Koordinator ist zu alt für diese Ansicht"
+
+	statLeer := voll(beispielZustand(jetzt, false, true))
+	statLeer.statistik = &api.Stats{Total: api.StatsPeriod{Members: []api.MemberStats{
+		{MinecraftName: "Lukas"}, {MinecraftName: "Mara"}}}, Last30: api.StatsPeriod{Members: []api.MemberStats{}}}
 
 	ueberBudget := voll(beispielZustand(jetzt, true, true))
 	ueberBudget.staende.Storage = &api.StorageInfo{UsedBytes: 23 << 30, BudgetBytes: 20 << 30, OverBudget: true}
@@ -149,6 +156,14 @@ func beispielAnsichten(jetzt time.Time) []ansicht {
 	add("mitglieder-als-gast", voll(gast), reiterMitglieder, nil) // fällt auf Start zurück
 	add("log", voll(admin), reiterLog, nil)
 	add("log-leer", leer, reiterLog, nil)
+	add("statistik", voll(admin), reiterStatistik, nil)
+	add("statistik-gast", voll(gast), reiterStatistik, nil)
+	add("statistik-30-tage", voll(gast), reiterStatistik, func(u *oberflaeche, _ time.Time) {
+		u.stat.zeitraum = zeitraum30Tage
+	})
+	add("statistik-noch-nichts", statLeer, reiterStatistik, nil)
+	add("statistik-laedt", leer, reiterStatistik, nil)
+	add("statistik-alter-koordinator", altKoord, reiterStatistik, nil)
 	add("laeuft-nicht", schnappschuss{verb: laeuftNicht}, reiterStart, nil)
 	add("laeuft-nicht-startfehler", schnappschuss{verb: laeuftNicht, startFehl: "wanderwelt hat sich nach dem Starten nicht gemeldet."}, reiterStart, nil)
 	add("startet", schnappschuss{verb: startet}, reiterStart, nil)
@@ -178,6 +193,28 @@ func beispielAnsichten(jetzt time.Time) []ansicht {
 	add("entdecken-formular", mitListe, reiterEntdecken, func(u *oberflaeche, _ time.Time) {
 		u.entd.nameFuer, u.entd.nameTitel, u.entd.nameFehler = "https://b.example.org", "Fremde Gruppe", "Der Name besteht aus 3 bis 16 Buchstaben, Ziffern oder Unterstrichen."
 		u.entd.nameEd.SetText("Steve_1")
+	})
+	// Mehrere Welten der Gruppe.
+	welten := voll(mitWelten(beispielZustand(jetzt, false, false), ""))
+	add("start-welten", welten, reiterStart, nil)
+	add("start-welten-laeuft", voll(mitWelten(beispielZustand(jetzt, false, true), "w2")), reiterStart, nil)
+	wadmin := voll(mitWelten(beispielZustand(jetzt, true, false), ""))
+	add("welt-welten-verwalten", wadmin, reiterWelt, func(u *oberflaeche, _ time.Time) { u.welt.verwaltung.offen = true })
+	add("welt-welten-formular", wadmin, reiterWelt, func(u *oberflaeche, _ time.Time) {
+		u.welt.verwaltung.offen = true
+		u.welt.verwaltung.formularOeffnen(nil)
+		u.welt.verwaltung.nameEd.SetText("Creative")
+		u.welt.verwaltung.modus = "creative"
+		u.welt.verwaltung.fehler = "Es gibt schon eine Welt „Creative“."
+	})
+	add("welt-welten-loeschen", wadmin, reiterWelt, func(u *oberflaeche, _ time.Time) {
+		u.welt.verwaltung.offen = true
+		u.welt.verwaltung.frageLoeschen(u, wadmin.z.Status.Worlds[1], 3, false)
+	})
+	wlauf := voll(mitWelten(beispielZustand(jetzt, true, true), "w2"))
+	add("welt-welten-laeuft", wlauf, reiterWelt, func(u *oberflaeche, _ time.Time) {
+		u.welt.verwaltung.offen = true
+		u.welt.verwaltung.fehler = "Die Welt „Creative“ läuft gerade."
 	})
 	add("entdecken-laedt", voll(entd), reiterEntdecken, nil)
 	fehlerE := voll(entd)

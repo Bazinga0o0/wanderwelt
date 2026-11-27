@@ -25,6 +25,9 @@ const (
 	staendeTakt = 30 * time.Second
 	// mitgliederTakt: Mitgliederliste bei sichtbarem Reiter „Mitglieder“.
 	mitgliederTakt = 15 * time.Second
+	// statistikTakt: Statistik bei sichtbarem Reiter „Statistik“ (der
+	// Koordinator zählt im 10-s-Takt; öfter lohnt nicht).
+	statistikTakt = 30 * time.Second
 	// entdeckenTakt: Entdecken bei sichtbarem Reiter (die Instanz merkt sich den
 	// Stand zusätzlich 20 s).
 	entdeckenTakt = 60 * time.Second
@@ -55,6 +58,8 @@ const (
 	reiterEntdecken
 	reiterMitglieder
 	reiterLog
+	reiterStatistik // hinten angehängt (Reihenfolge der Reiter bleibt sonst)
+	reiterZustand   // nur Admins (zustand.go)
 	anzahlReiter
 )
 
@@ -76,6 +81,7 @@ type quelle interface {
 	Log(ctx context.Context, zeilen int) (string, error)
 	Mitglieder(ctx context.Context) ([]api.MemberInfo, error)
 	Beitritte(ctx context.Context) ([]api.JoinRequestInfo, error)
+	Statistik(ctx context.Context) (*api.Stats, error)
 	Entdecken(ctx context.Context, neu bool) (*fensterapi.Entdecken, error)
 	Aktion(ctx context.Context, name string, body any) error
 }
@@ -109,6 +115,10 @@ type schnappschuss struct {
 	mitgliederErr string
 	mitgliederAb  time.Time
 
+	statistik    *api.Stats
+	statistikErr string
+	statistikAb  time.Time
+
 	// Offene Beitrittsanfragen (kommen mit den Mitgliedern).
 	anfragen    []api.JoinRequestInfo
 	anfragenErr string
@@ -119,6 +129,9 @@ type schnappschuss struct {
 	entdeckenErr    string
 	entdeckenAb     time.Time
 	entdeckenLaeuft bool
+
+	// Zustand: Gesundheit des Koordinators (nur Admins, zustand.go).
+	gesundheit gesundheitDaten
 }
 
 // daten hält Verbindung und Schnappschuss.
@@ -126,12 +139,14 @@ type daten struct {
 	// staendeNeu zählt die Wünsche „Stände neu laden“ (unter mu).
 	staendeNeu int
 	// Takte (Tests verkürzen sie).
-	takt, staendeTakt, mitgliederTakt, logTakt, startWarten, entdeckenTakt time.Duration
+	takt, staendeTakt, mitgliederTakt, logTakt, startWarten, entdeckenTakt, statistikTakt time.Duration
 	// entdeckenNeu: Das Verzeichnis jetzt neu abfragen (Knopf „Aktualisieren“; unter mu).
 	entdeckenNeu bool
 	// bildFrist: Kommt so lange nach einem Neuzeichnen-Wunsch kein Bild,
 	// ruht die Abfrage (Oberfläche hängt).
 	bildFrist time.Duration
+	// gesundheitTakt: Abstand der Abrufe der Gesundheit (0: gesundheitTakt).
+	gesundheitTakt time.Duration
 
 	verbinde    func() (quelle, error)
 	starte      func() error // Instanz losgelöst starten
@@ -173,6 +188,7 @@ func neueDaten(starte func() error, neuZeichnen func()) *daten {
 		takt:           zustandTakt,
 		staendeTakt:    staendeTakt,
 		mitgliederTakt: mitgliederTakt,
+		statistikTakt:  statistikTakt,
 		logTakt:        logTakt,
 		entdeckenTakt:  entdeckenTakt,
 		startWarten:    startWarten,
@@ -369,6 +385,7 @@ func (d *daten) runde(ctx context.Context) {
 	holeSaves := r == reiterWelt && admin && d.savesWunsch && faellig(n.savesAb, jetzt, d.staendeTakt)
 	holeLog := r == reiterLog && faellig(n.logAb, jetzt, d.logTakt)
 	holeMitglieder := r == reiterMitglieder && admin && faellig(n.mitgliederAb, jetzt, d.mitgliederTakt)
+	holeStatistik := r == reiterStatistik && faellig(n.statistikAb, jetzt, d.statistikTakt)
 	holeEntdecken := r == reiterEntdecken && !n.entdeckenLaeuft && (d.entdeckenNeu || faellig(n.entdeckenAb, jetzt, d.entdeckenTakt))
 	neuHolen := d.entdeckenNeu
 	if holeEntdecken {
@@ -429,6 +446,19 @@ func (d *daten) runde(ctx context.Context) {
 		}
 		d.mu.Unlock()
 	}
+	if holeStatistik {
+		actx, cancel := context.WithTimeout(ctx, anfrageFrist)
+		st, err := c.Statistik(actx)
+		cancel()
+		d.mu.Lock()
+		d.s.statistikAb = d.jetzt()
+		if err != nil {
+			d.s.statistikErr = err.Error()
+		} else {
+			d.s.statistik, d.s.statistikErr = st, ""
+		}
+		d.mu.Unlock()
+	}
 	if holeMitglieder {
 		actx, cancel := context.WithTimeout(ctx, anfrageFrist)
 		m, err := c.Mitglieder(actx)
@@ -453,6 +483,8 @@ func (d *daten) runde(ctx context.Context) {
 		}
 		d.mu.Unlock()
 	}
+
+	d.gesundheitRunde(ctx, c, r, admin)
 
 	d.mu.Lock()
 	geaendert := !gleich(alt, d.s)
@@ -500,7 +532,9 @@ func gleich(a, b schnappschuss) bool {
 	a.savesAb, b.savesAb = time.Time{}, time.Time{}
 	a.logAb, b.logAb = time.Time{}, time.Time{}
 	a.mitgliederAb, b.mitgliederAb = time.Time{}, time.Time{}
+	a.statistikAb, b.statistikAb = time.Time{}, time.Time{}
 	a.entdeckenAb, b.entdeckenAb = time.Time{}, time.Time{}
+	a.gesundheit.ab, b.gesundheit.ab = time.Time{}, time.Time{}
 	return reflect.DeepEqual(a, b)
 }
 

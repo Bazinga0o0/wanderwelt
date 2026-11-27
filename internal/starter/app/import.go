@@ -207,9 +207,11 @@ type importRequest struct {
 // importContext ist, was beide Wege (Dialog und Übergabe) vor der Auswahl
 // brauchen.
 type importContext struct {
-	c         *client.Client
+	c         *client.Client // bezieht sich auf die Welt, in die übernommen wird
 	machineID string
 	m         *api.Manifest
+	// worldName: Name dieser Welt (leer: der Koordinator kennt keine mehreren Welten).
+	worldName string
 }
 
 // importPrepare: nicht beim Hosten, Welt-Ordner belegen (keine
@@ -227,6 +229,11 @@ func (a *App) importPrepare() (ic importContext, release func(), refused *result
 	ic.c, ic.machineID = a.c, a.machineID
 	a.mu.Unlock()
 	ctx := a.ctx
+	// Übernommen wird in die Welt, die „Spielen“ nimmt (gewählt, sonst die
+	// erste); hostet jemand eine andere, geht es ohnehin nicht.
+	if wc, err := a.pickWorld(ctx, ic.c); err == nil {
+		ic.c, ic.worldName = wc.C, worldName(a.statusFresh(ctx, ic.c), wc.ID)
+	}
 	me, err := retry401(ctx, func() (*api.Me, error) { return ic.c.Me(ctx) })
 	if err != nil {
 		a.releaseWorld()
@@ -281,7 +288,7 @@ func (a *App) chooseAndImport() *resultDialog {
 		labels[i] = s.Label()
 	}
 	choice, err := zenity.List(
-		"Welche Welt soll die Gruppenwelt werden?\nDie bisherige Gruppenwelt bleibt als Archiv auf dem Koordinator.",
+		"Welche Welt soll "+weltNom(ic.worldName)+" werden?\nDie bisherige Welt bleibt als Archiv auf dem Koordinator.",
 		labels,
 		zenity.Title("wanderwelt – Welt übernehmen"), windowIcon(),
 		zenity.Width(720), zenity.Height(420),
@@ -299,9 +306,9 @@ func (a *App) chooseAndImport() *resultDialog {
 	if ok, refused := checkSaveUI(save, ic.m.MinecraftVersion, false); !ok {
 		return refused
 	}
-	if !confirm(fmt.Sprintf("„%s“ (Minecraft %s, %s) wird zur Gruppenwelt und ab jetzt in Minecraft %s gespielt.\n\n"+
-		"Die bisherige Gruppenwelt bleibt als Archiv auf dem Koordinator. Dein Speicherstand selbst bleibt unverändert.\n\nJetzt übernehmen?",
-		save.Folder, save.Version, humanSize(save.Size), ic.m.MinecraftVersion), "Übernehmen", "Abbrechen") {
+	if !confirm(fmt.Sprintf("„%s“ (Minecraft %s, %s) wird zu %s und ab jetzt in Minecraft %s gespielt.\n\n"+
+		"Die bisherige Welt bleibt als Archiv auf dem Koordinator. Dein Speicherstand selbst bleibt unverändert.\n\nJetzt übernehmen?",
+		save.Folder, save.Version, humanSize(save.Size), weltDat(ic.worldName), ic.m.MinecraftVersion), "Übernehmen", "Abbrechen") {
 		return nil
 	}
 	return a.importWithProgress(ic, save, true)
@@ -462,6 +469,13 @@ func ImportCLI(args []string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	c := client.New(g)
+	// In die Welt übernehmen, die „Spielen“ nimmt (gewählt, sonst die erste).
+	if st, err := c.Status(ctx); err == nil {
+		if id, aware := chooseWorld(st, group.SelectedWorld()); aware {
+			c = c.ForWorld(id)
+			fmt.Printf("Welt:     wird zur Welt „%s“ der Gruppe\n", worldName(st, id))
+		}
+	}
 	me, err := retry401(ctx, func() (*api.Me, error) { return c.Me(ctx) })
 	if err != nil {
 		return fail("%s", explain(err))

@@ -10,6 +10,7 @@
 package server
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"crypto/sha512"
@@ -37,6 +38,7 @@ import (
 	"github.com/Bazinga0o0/wanderwelt/internal/koord/config"
 	"github.com/Bazinga0o0/wanderwelt/internal/koord/lease"
 	"github.com/Bazinga0o0/wanderwelt/internal/koord/portholder"
+	"github.com/Bazinga0o0/wanderwelt/internal/koord/stats"
 	"github.com/Bazinga0o0/wanderwelt/internal/koord/store"
 	"github.com/Bazinga0o0/wanderwelt/internal/koord/wartung"
 )
@@ -178,6 +180,11 @@ type Server struct {
 	commitMu sync.Mutex
 	presMu   sync.Mutex
 	presence map[string]presenceEntry
+
+	// stats zählt Spiel- und Hostzeit je Mitglied (stats.go).
+	stats *stats.Tracker
+	// health: Laufzeit-Merker der Gesundheit (health.go).
+	health healthState
 }
 
 // New baut den Server. Im Dev-Modus warnt er, weil dann jeder, der den
@@ -216,6 +223,8 @@ func New(cfg *config.Config, lm *lease.Manager, st *store.Store, ph portholder.C
 	s.membersVersion.Store(time.Now().UnixNano())
 	s.loadOverlays()
 	s.loadHo()
+	s.openStats()
+	s.initHealth()
 
 	s.mux.HandleFunc("GET /v1/me", s.handleMe)
 	s.mux.HandleFunc("GET /v1/status", s.handleStatus)
@@ -240,6 +249,7 @@ func New(cfg *config.Config, lm *lease.Manager, st *store.Store, ph portholder.C
 	s.mux.HandleFunc("GET /v1/generations/{world}/{n}", s.handleGeneration)
 	s.mux.HandleFunc("POST /v1/generations", s.handleCommit)
 	s.mux.HandleFunc("PUT /v1/profile/{machine}", s.handleProfile)
+	s.mux.HandleFunc("GET /v1/stats", s.handleStats)
 	s.mux.HandleFunc("GET /v1/members", s.handleMembers)
 	s.mux.HandleFunc("PUT /v1/members/{email}", s.handleSetRole)
 	s.mux.HandleFunc("PUT /v1/members/{email}/minecraft", s.handleSetMemberMinecraft)
@@ -252,6 +262,11 @@ func New(cfg *config.Config, lm *lease.Manager, st *store.Store, ph portholder.C
 	s.mux.HandleFunc("GET /v1/join-requests", s.handleJoinRequests)
 	s.mux.HandleFunc("POST /v1/join-requests/{email}/accept", s.handleJoinAccept)
 	s.mux.HandleFunc("POST /v1/join-requests/{email}/decline", s.handleJoinDecline)
+	s.mux.HandleFunc("GET /v1/health", s.handleHealth)
+	s.mux.HandleFunc("GET /v1/worlds", s.handleWorlds)
+	s.mux.HandleFunc("POST /v1/worlds", s.handleWorldCreate)
+	s.mux.HandleFunc("PATCH /v1/worlds/{id}", s.handleWorldPatch)
+	s.mux.HandleFunc("DELETE /v1/worlds/{id}", s.handleWorldDelete)
 	s.mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "unbekannter Endpunkt "+r.Method+" "+r.URL.Path)
 	})
@@ -279,6 +294,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // wird beim nächsten Takt wiederholt. Wartet ein Zurückholen auf den
 // abgelaufenen Zuschlag, wird es danach angewandt.
 func (s *Server) ExpireTick(ctx context.Context) {
+	s.stats.Tick(s.now())
 	s.phMu.Lock()
 	defer s.phMu.Unlock()
 	s.wartungTickLocked(ctx)
@@ -299,6 +315,7 @@ func (s *Server) PruneTick(context.Context) {
 	if s.wartung.Load() != nil {
 		// Nach einem Update nur als Probe, bis „wartung ende“ (wartung.go).
 		rep, err := s.st.PruneProbe(start)
+		s.notePrune(pruneResult(start, true, rep, err))
 		switch {
 		case err != nil:
 			s.log.Error("AUFRÄUM-PROBE FEHLGESCHLAGEN", "err", err)
@@ -310,7 +327,9 @@ func (s *Server) PruneTick(context.Context) {
 		}
 		return
 	}
-	if err := s.st.Prune(start); err != nil {
+	err := s.st.Prune(start)
+	s.notePrune(pruneResult(start, false, store.PruneReport{}, err))
+	if err != nil {
 		s.log.Error("AUFRÄUMEN DES SPEICHERS FEHLGESCHLAGEN", "err", err)
 		return
 	}
@@ -474,7 +493,8 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
-	worldID, head, created := s.st.HeadInfo()
+	running := s.runningWorld()
+	worldID, head, created := s.st.HeadInfoOf(cmp.Or(running, s.normWorld("")))
 	st := api.Status{
 		Players:           s.lm.Players(),
 		HeadGeneration:    head,
@@ -488,6 +508,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	st.Members = len(s.memberList())
 	st.NoDiscordJoin = s.cfg.NoDiscordJoin
+	st.Worlds, st.RunningWorld = s.worldList(running), running
 	if info, ok := s.lm.Info(); ok {
 		st.Host = publicHost(info.Host)
 		// Ein Zuschlag nur zum Hochladen hat keinen Server: nie bereit.
@@ -630,12 +651,14 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "ungültige machine_id")
 		return
 	}
+	world, reason := s.playWorld(req.GroupWorld)
 	cand := lease.Candidate{
 		Email:         id.member.Email,
 		MinecraftName: id.member.Minecraft,
 		MachineID:     req.MachineID,
 		AccountID:     id.accountID,
 		Score:         req.Score,
+		World:         world,
 	}
 	// Auch vor einem Zuschlag nur zum Hochladen: Ein schnell neu gestarteter
 	// Starter reicht den Stand seiner abgestürzten Sitzung nach und wartete
@@ -647,18 +670,33 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 	// Während der Wartung startet niemand und spielt niemand mit; der
 	// Grund steht im Hinweis des Starters (wartung.go).
 	if reason := s.wartungReason(); reason != "" {
-		s.writePlay(w, lease.Grant{Role: api.RoleDenied}, reason)
+		s.writePlay(w, lease.Grant{Role: api.RoleDenied}, reason, world)
 		return
 	}
 	// Während ein Zurückholen aussteht, startet niemand und spielt niemand
 	// mit: Der Host stoppt gleich, danach gibt es einen neuen Head.
 	if reason := s.restoreBlocksPlay(context.WithoutCancel(r.Context())); reason != "" {
-		s.writePlay(w, lease.Grant{Role: api.RoleDenied}, reason)
+		s.writePlay(w, lease.Grant{Role: api.RoleDenied}, reason, world)
+		return
+	}
+	// Die gewünschte Welt gibt es nicht (mehr).
+	if reason != "" {
+		s.writePlay(w, lease.Grant{Role: api.RoleDenied}, reason, "")
 		return
 	}
 	if req.UploadOnly {
 		s.playUploadOnly(w, r, req, cand)
 		return
+	}
+	// Eine leere Welt darf nur ein Admin zum ersten Mal starten (nur er
+	// darf den ersten Stand einreichen): Mitspielen bei laufendem Host
+	// geht, einen Host für eine leere Welt wählen lassen nicht.
+	if e, ok := s.st.GroupWorld(world); ok && e.Empty() && !id.member.Admin {
+		if _, _, hosting := s.lm.Current(); !hosting {
+			s.writePlay(w, lease.Grant{Role: api.RoleDenied},
+				"Die Welt „"+e.Name+"“ ist noch leer – ein Admin muss sie zuerst starten (oder eine Welt übernehmen).", world)
+			return
+		}
 	}
 
 	g, err := s.lm.Request(r.Context(), cand)
@@ -678,7 +716,7 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	s.writePlay(w, g, g.Reason)
+	s.writePlay(w, g, g.Reason, world)
 }
 
 // releaseStale gibt den Zuschlag frei, den derselbe PC (Konto und
@@ -727,7 +765,7 @@ func (s *Server) playUploadOnly(w http.ResponseWriter, r *http.Request, req api.
 		if host, _, ok := s.lm.Current(); ok {
 			return lease.Grant{}, host.MinecraftName + " hostet gerade", nil
 		}
-		if reason, err := s.baseMismatch(req); reason != "" || err != nil {
+		if reason, err := s.baseMismatch(req, cand.World); reason != "" || err != nil {
 			return lease.Grant{}, reason, err
 		}
 		g, err := s.lm.Acquire(cand)
@@ -740,7 +778,7 @@ func (s *Server) playUploadOnly(w http.ResponseWriter, r *http.Request, req api.
 		// Mit dem Zuschlag kann sonst niemand einreichen; jetzt steht der
 		// Head fest. Hat sich zwischen Prüfung und Zuschlag etwas getan,
 		// gilt die Basis nicht mehr.
-		if reason, err := s.baseMismatch(req); reason != "" || err != nil {
+		if reason, err := s.baseMismatch(req, cand.World); reason != "" || err != nil {
 			s.releaseGrant(g, req.MachineID)
 			return lease.Grant{}, reason, err
 		}
@@ -755,9 +793,9 @@ func (s *Server) playUploadOnly(w http.ResponseWriter, r *http.Request, req api.
 	case err != nil:
 		s.internal(w, "Zuschlag zum Nachreichen", err)
 	case reason != "":
-		s.writePlay(w, lease.Grant{Role: api.RoleDenied}, reason)
+		s.writePlay(w, lease.Grant{Role: api.RoleDenied}, reason, cand.World)
 	default:
-		s.writePlay(w, g, "")
+		s.writePlay(w, g, "", cand.World)
 	}
 }
 
@@ -786,11 +824,8 @@ func writeHolderError(w http.ResponseWriter, err error) {
 
 // baseMismatch meldet, warum die Basis von req nicht der Head ist ("" =
 // passt).
-func (s *Server) baseMismatch(req api.PlayRequest) (string, error) {
-	worldID, head, err := s.head()
-	if err != nil {
-		return "", err
-	}
+func (s *Server) baseMismatch(req api.PlayRequest, world string) (string, error) {
+	worldID, head := s.st.HeadRefOf(world)
 	if req.BaseWorldID != worldID || req.BaseGeneration != head {
 		return fmt.Sprintf("seitdem hat sich der Stand geändert (Basis %q/%d, aktuell %q/%d)",
 			req.BaseWorldID, req.BaseGeneration, worldID, head), nil
@@ -844,18 +879,32 @@ func (s *Server) clearLocked(ctx context.Context) {
 	s.needClear = false
 }
 
-func (s *Server) writePlay(w http.ResponseWriter, g lease.Grant, reason string) {
-	worldID, head, err := s.head()
-	if err != nil {
-		s.internal(w, "Head lesen", err)
-		return
+// writePlay antwortet auf eine Spielanfrage. world ist die gewünschte Welt
+// (aufgelöste Kennung, "" ohne Weltliste); Head und Welt der Antwort sind
+// die des Zuschlags, bei „denied“ wegen einer anderen laufenden Welt die der
+// laufenden.
+func (s *Server) writePlay(w http.ResponseWriter, g lease.Grant, reason, world string) {
+	if g.Reason == lease.ReasonOtherWorld {
+		running := s.normWorld(g.World)
+		name := "eine andere Welt"
+		if e, ok := s.st.GroupWorld(running); ok {
+			name = "„" + e.Name + "“"
+		}
+		reason = "Gerade läuft " + name + " – es läuft immer nur eine Welt. Wähle diese Welt oder warte, bis das Hosten beendet ist."
+		world = running
+	} else if g.Role == api.RoleHost || g.Role == api.RoleJoin {
+		world = cmp.Or(g.World, world)
 	}
+	worldID, head := s.st.HeadRefOf(world)
 	resp := api.PlayResponse{
 		Role:             g.Role,
 		HeadGeneration:   head,
 		WorldID:          worldID,
 		MinecraftAddress: s.cfg.MinecraftAddress,
 		Reason:           reason,
+	}
+	if e, ok := s.st.GroupWorld(world); ok {
+		resp.GroupWorld, resp.GroupWorldName, resp.Empty = e.ID, e.Name, e.Empty()
 	}
 	switch g.Role {
 	case api.RoleHost:
@@ -892,6 +941,7 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := identityOf(r)
+	s.noteStarter(id.member.Email, req.MachineID, req.StarterVersion)
 	if s.isIncoming(id, req.LeaseID) {
 		// Der wartende Zuschlag der Übergabe: lebt, solange er Lebenszeichen
 		// schickt; ready macht die Übergabe „bereit“.
@@ -921,6 +971,7 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.lm.Report(req.LeaseID, req.Players, req.Ready)
+	s.statsSample(req.LeaseID, id.member.Email, req.Players)
 	// Ältere Starter lesen den Körper nicht; sie prüfen nur auf 2xx.
 	resp := api.HeartbeatResponse{
 		Restore:        s.restoreNotice(),
@@ -990,8 +1041,14 @@ func (s *Server) handleRelease(w http.ResponseWriter, r *http.Request) {
 // geloggt), statt das Hosten für alle zu verhindern; Mitglieder ohne
 // Minecraft-Namen fehlen still.
 func (s *Server) handleHostSettings(w http.ResponseWriter, r *http.Request) {
-	host, _, ok := s.lm.Current()
-	if !ok || !strings.EqualFold(host.Email, identityOf(r).member.Email) {
+	// Der Haupt-Zuschlag oder – bei einer Host-Übergabe – der wartende des
+	// Kontos; die Welt kommt vom Zuschlag.
+	var info lease.Info
+	if main, ok := s.lm.Info(); ok && strings.EqualFold(main.Host.Email, identityOf(r).member.Email) {
+		info = main
+	} else if in, ok := s.lm.Incoming(); ok && strings.EqualFold(in.Host.Email, identityOf(r).member.Email) {
+		info = in
+	} else {
 		writeError(w, http.StatusConflict, "kein gültiger Zuschlag für dieses Konto")
 		return
 	}
@@ -1002,6 +1059,16 @@ func (s *Server) handleHostSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if hs.Properties == nil {
 		hs.Properties = map[string]string{}
+	}
+	// Eigenschaften der Welt (Spielmodus, Schwierigkeit) gehen vor
+	// world_settings; ungesetzte lassen den Gruppenstandard stehen.
+	if e, ok := s.st.GroupWorld(s.normWorld(info.World)); ok {
+		if e.Gamemode != "" {
+			hs.Properties["gamemode"] = e.Gamemode
+		}
+		if e.Difficulty != "" {
+			hs.Properties["difficulty"] = e.Difficulty
+		}
 	}
 	// Abstand der Zwischenstände (snapshot_interval). 0 (Konfiguration nicht
 	// über Load gelesen) fehlt in der Antwort; der Host nimmt dann 5 min.
@@ -1227,7 +1294,13 @@ func (s *Server) handleGetBlob(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleHead(w http.ResponseWriter, r *http.Request) {
-	_, gen, err := s.st.Head()
+	// Ohne ?world= der Head der ersten Welt (so liest ein älterer Starter).
+	world := r.URL.Query().Get("world")
+	if _, ok := s.st.GroupWorld(world); !ok && world != "" {
+		writeError(w, http.StatusNotFound, "diese Welt gibt es nicht (mehr)")
+		return
+	}
+	_, gen, err := s.st.HeadGenOf(world)
 	if err != nil {
 		s.internal(w, "Head lesen", err)
 		return
@@ -1262,15 +1335,7 @@ func (s *Server) handleCommit(w http.ResponseWriter, r *http.Request) {
 	if !s.decode(w, r, maxListBody, &req) {
 		return
 	}
-	worldID, _, err := s.head()
-	if err != nil {
-		s.internal(w, "Head lesen", err)
-		return
-	}
-	if (req.NewWorld || worldID == "") && !id.member.Admin {
-		writeError(w, http.StatusForbidden, "eine Welt anlegen dürfen nur Admins")
-		return
-	}
+
 	// commitMu: Nach der Meldung ready der Übergabe kommt kein Stand des
 	// alten Zuschlags mehr durch (handover.go).
 	s.commitMu.Lock()
@@ -1284,7 +1349,17 @@ func (s *Server) handleCommit(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "Host-Übergabe läuft: dieser Zuschlag reicht nichts mehr ein")
 		return
 	}
-	g, err := s.st.Commit(req, *host, s.now())
+	// Der Stand geht in die Welt des Zuschlags. Eine leere Welt füllen oder
+	// ihre Weltkennung ersetzen dürfen nur Admins.
+	var leaseWorld string
+	if info, ok := s.lm.Info(); ok && info.LeaseID == cur {
+		leaseWorld = s.normWorld(info.World)
+	}
+	if worldID, _ := s.st.HeadRefOf(leaseWorld); (req.NewWorld || worldID == "") && !id.member.Admin {
+		writeError(w, http.StatusForbidden, "eine Welt anlegen dürfen nur Admins")
+		return
+	}
+	g, err := s.st.CommitTo(leaseWorld, req, *host, s.now())
 	if err != nil {
 		s.storeError(w, "Commit", err)
 		return
@@ -1374,13 +1449,6 @@ func (s *Server) handleSpeedTest(w http.ResponseWriter, r *http.Request) {
 }
 
 // --- Hilfen ---
-
-// head liefert aktive Welt und Head-Nummer ("" und 0 ohne Welt), ohne die
-// Generation zu kopieren.
-func (s *Server) head() (string, int64, error) {
-	worldID, n := s.st.HeadRef()
-	return worldID, n, nil
-}
 
 // decode liest genau ein JSON-Objekt nach v; unbekannte Felder sind ein
 // Fehler (ein älterer Koordinator soll nichts still verwerfen).

@@ -81,10 +81,12 @@ var (
 	ErrTooLarge = errors.New("Anfrage zu groß")
 )
 
-// current ist der Inhalt von current.json.
+// current ist der Inhalt von current.json (Format 2): die Weltliste der
+// Gruppe (welten.go). Format 1 (eine Welt: world_id und head) migriert
+// format.go.
 type current struct {
-	WorldID string `json:"world_id"`
-	Head    int64  `json:"head"`
+	Next   int          `json:"next"` // Zähler für neue Welt-Kennungen w<N>
+	Worlds []WorldEntry `json:"worlds"`
 }
 
 // Store ist der Speicher für Blobs und Generationen.
@@ -92,9 +94,11 @@ type Store struct {
 	dir    string
 	budget int64
 
-	mu   sync.Mutex
-	cur  current         // WorldID == "": noch keine Welt
-	head *api.Generation // Generation cur.Head der aktiven Welt, nil ohne Welt
+	mu  sync.Mutex
+	cur current // Weltliste; ohne Einträge: noch keine Welt
+	// heads: Generation Head je Welt der Liste (Schlüssel: Welt-Kennung),
+	// fehlt bei einer leeren Welt.
+	heads map[string]*api.Generation
 	// fresh: Blobs, die seit dem letzten Commit hochgeladen oder über
 	// Missing als vorhanden gemeldet wurden. Der Aufräumlauf lässt sie
 	// stehen, auch wenn noch keine Generation sie nennt – sonst könnte er
@@ -132,11 +136,16 @@ type GenMeta struct {
 	RestoredFrom     *api.GenRef
 }
 
-// WorldMeta ist eine Welt mit den Angaben zu ihren Generationen.
+// WorldMeta ist eine Weltkennung mit den Angaben zu ihren Generationen.
+// Active: sie ist die aktuelle Weltkennung einer Welt der Liste (GroupWorld,
+// GroupName), sonst ein Archiv (GroupWorld nennt dann die Welt, zu der das
+// Archiv gehört, sofern bekannt).
 type WorldMeta struct {
-	WorldID string
-	Active  bool
-	Gens    []GenMeta // neueste zuerst
+	WorldID    string
+	Active     bool
+	GroupWorld string
+	GroupName  string
+	Gens       []GenMeta // neueste zuerst
 }
 
 // Open öffnet den Speicher in dir und legt die Ordner bei Bedarf an. budget
@@ -163,6 +172,7 @@ func Open(dir string, budget int64) (*Store, error) {
 		fresh:     map[string]struct{}{},
 		uploading: map[string]bool{},
 		meta:      map[genKey]GenMeta{},
+		heads:     map[string]*api.Generation{},
 	}
 
 	data, err := os.ReadFile(filepath.Join(dir, "current.json"))
@@ -176,29 +186,35 @@ func Open(dir string, budget int64) (*Store, error) {
 	if err := json.Unmarshal(data, &cur); err != nil {
 		return nil, fmt.Errorf("store: current.json: %w", err)
 	}
-	if !validWorldID(cur.WorldID) || cur.Head < 1 {
-		return nil, fmt.Errorf("store: current.json ungültig: Welt %q, Head %d", cur.WorldID, cur.Head)
+	if err := checkCurrent(cur); err != nil {
+		return nil, fmt.Errorf("store: current.json ungültig: %w", err)
 	}
-	g, err := s.readGeneration(cur.WorldID, cur.Head)
-	if err != nil {
-		return nil, fmt.Errorf("store: Head aus current.json: %w", err)
-	}
-
-	// Generationen über dem Head wurden nie veröffentlicht (Absturz zwischen
-	// Generationsdatei und current.json).
-	nums, _, err := s.scanGenerations(cur.WorldID)
-	if err != nil {
-		return nil, fmt.Errorf("store: %w", err)
-	}
-	for _, n := range nums {
-		if n > cur.Head {
-			if err := os.Remove(s.genPath(cur.WorldID, n)); err != nil {
-				return nil, fmt.Errorf("store: halbe Generation entfernen: %w", err)
+	for _, e := range cur.Worlds {
+		if e.StoreWorld == "" {
+			continue
+		}
+		if e.Deleted.IsZero() {
+			g, err := s.readGeneration(e.StoreWorld, e.Head)
+			if err != nil {
+				return nil, fmt.Errorf("store: Head der Welt %s aus current.json: %w", e.ID, err)
+			}
+			s.heads[e.ID] = g
+		}
+		// Generationen über dem Head wurden nie veröffentlicht (Absturz
+		// zwischen Generationsdatei und current.json).
+		nums, _, err := s.scanGenerations(e.StoreWorld)
+		if err != nil {
+			return nil, fmt.Errorf("store: %w", err)
+		}
+		for _, n := range nums {
+			if n > e.Head {
+				if err := os.Remove(s.genPath(e.StoreWorld, n)); err != nil {
+					return nil, fmt.Errorf("store: halbe Generation entfernen: %w", err)
+				}
 			}
 		}
 	}
-
-	s.cur, s.head = cur, g
+	s.cur = cur
 	return s, nil
 }
 
@@ -317,33 +333,54 @@ func (s *Store) OpenBlob(sha string) (io.ReadSeekCloser, int64, error) {
 	return f, info.Size(), nil
 }
 
-// Head liefert die aktive Welt und ihre neueste Generation; ohne Welt ist
-// gen nil.
+// Head liefert die Weltkennung und die neueste Generation der ersten Welt
+// der Liste (so liest ein älterer Starter ohne Weltauswahl); ohne Welt ist
+// gen nil. HeadOf nimmt die Welt.
 func (s *Store) Head() (worldID string, gen *api.Generation, err error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.head == nil {
-		return "", nil, nil
-	}
-	return s.cur.WorldID, cloneGen(s.head), nil
+	return s.HeadGenOf("")
 }
 
-// HeadRef liefert aktive Welt und Head-Nummer ("" und 0 ohne Welt), ohne die
-// Generation zu kopieren.
-func (s *Store) HeadRef() (worldID string, n int64) {
+// HeadGenOf liefert Weltkennung und neueste Generation der Welt world ("":
+// die erste); ohne Stand (leere oder fehlende Welt) ist gen nil.
+func (s *Store) HeadGenOf(world string) (worldID string, gen *api.Generation, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.cur.WorldID, s.cur.Head
+	e := s.live(world)
+	if e == nil || s.heads[e.ID] == nil {
+		return "", nil, nil
+	}
+	return e.StoreWorld, cloneGen(s.heads[e.ID]), nil
+}
+
+// HeadRef liefert Weltkennung und Head-Nummer der ersten Welt ("" und 0
+// ohne Stand), ohne die Generation zu kopieren.
+func (s *Store) HeadRef() (worldID string, n int64) {
+	return s.HeadRefOf("")
+}
+
+// HeadRefOf ist HeadRef für die Welt world ("": die erste).
+func (s *Store) HeadRefOf(world string) (worldID string, n int64) {
+	worldID, n, _ = s.HeadInfoOf(world)
+	return worldID, n
 }
 
 // HeadInfo ist HeadRef samt Zeit des Heads (Nullzeit ohne Welt).
 func (s *Store) HeadInfo() (worldID string, n int64, created time.Time) {
+	return s.HeadInfoOf("")
+}
+
+// HeadInfoOf ist HeadInfo für die Welt world ("": die erste).
+func (s *Store) HeadInfoOf(world string) (worldID string, n int64, created time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.head != nil {
-		created = s.head.Created
+	e := s.live(world)
+	if e == nil || e.StoreWorld == "" {
+		return "", 0, time.Time{}
 	}
-	return s.cur.WorldID, s.cur.Head, created
+	if g := s.heads[e.ID]; g != nil {
+		created = g.Created
+	}
+	return e.StoreWorld, e.Head, created
 }
 
 // Pin legt die Generationen fest, die Prune zusätzlich immer behält, auch
@@ -563,7 +600,19 @@ func checkFrame(sha string, size int64, r io.Reader, w io.Writer) error {
 // Basis nicht: Der Stand wird Generation 1 einer neuen Welt, die bisherige
 // bleibt als Archiv. Ohne jede Welt legt auch ein Commit mit leerer Basis
 // die erste Welt an.
+//
+// Mehrere Welten: Commit gilt für die erste Welt der Liste (wie vor der
+// Weltliste), CommitTo für die Welt world. „Basis“ und „aktive Welt“ sind
+// dann Weltkennung und Head dieser Welt; NewWorld ersetzt die Weltkennung
+// dieser Welt (die bisherige bleibt Archiv der Welt).
 func (s *Store) Commit(req api.CommitRequest, host api.HostInfo, now time.Time) (*api.Generation, error) {
+	return s.CommitTo("", req, host, now)
+}
+
+// CommitTo nimmt einen Stand für die Welt world ("": die erste) an, siehe
+// Commit. Eine Welt, die es nicht gibt, ist ErrNotFound (nur ohne jede Welt
+// legt ein Commit an die erste Welt „Welt“ neu an).
+func (s *Store) CommitTo(world string, req api.CommitRequest, host api.HostInfo, now time.Time) (*api.Generation, error) {
 	files, err := checkFiles(req.Files)
 	if err != nil {
 		return nil, err
@@ -572,15 +621,24 @@ func (s *Store) Commit(req api.CommitRequest, host api.HostInfo, now time.Time) 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if !req.NewWorld && (req.BaseWorldID != s.cur.WorldID || req.BaseGeneration != s.cur.Head) {
+	e := s.live(world)
+	if e == nil && (world != "" || len(s.liveEntries()) > 0) {
+		return nil, fmt.Errorf("%w: Welt %q", ErrNotFound, world)
+	}
+	var curWorld string
+	var curHead int64
+	if e != nil {
+		curWorld, curHead = e.StoreWorld, e.Head
+	}
+	if !req.NewWorld && (req.BaseWorldID != curWorld || req.BaseGeneration != curHead) {
 		return nil, fmt.Errorf("%w: Basis %q/%d, Head ist %q/%d",
-			ErrConflict, req.BaseWorldID, req.BaseGeneration, s.cur.WorldID, s.cur.Head)
+			ErrConflict, req.BaseWorldID, req.BaseGeneration, curWorld, curHead)
 	}
 	// Rezepte des Heads sind geprüft, und Prune hält ihre Segmente, solange
 	// der Head steht.
 	known := map[string]int64{} // Rezept → Größe der Datei
-	if s.head != nil {
-		for _, f := range s.head.Files {
+	if e != nil && s.heads[e.ID] != nil {
+		for _, f := range s.heads[e.ID].Files {
 			if f.Recipe != "" {
 				known[f.Recipe] = f.Size
 			}
@@ -604,9 +662,9 @@ func (s *Store) Commit(req api.CommitRequest, host api.HostInfo, now time.Time) 
 	}
 
 	g := &api.Generation{
-		Number:           s.cur.Head + 1,
-		Parent:           s.cur.Head,
-		WorldID:          s.cur.WorldID,
+		Number:           curHead + 1,
+		Parent:           curHead,
+		WorldID:          curWorld,
 		Created:          now.UTC(),
 		HostEmail:        host.Email,
 		MachineID:        cmp.Or(host.MachineID, req.MachineID),
@@ -615,18 +673,29 @@ func (s *Store) Commit(req api.CommitRequest, host api.HostInfo, now time.Time) 
 		Files:            files,
 		Players:          slices.Clone(req.Players),
 	}
-	if req.NewWorld || s.cur.WorldID == "" {
+	next := s.cloneCur()
+	if e == nil {
+		// Ohne jede Welt: die erste Welt der Gruppe.
+		ne := newEntry(&next, DefaultWorldName, "", "", now)
+		e = &ne
+		next.Worlds = append(next.Worlds, ne)
+	}
+	if req.NewWorld || curWorld == "" {
 		id, err := s.createWorld(now)
 		if err != nil {
 			return nil, err
 		}
 		g.WorldID, g.Number, g.Parent = id, 1, 0
-		if err := s.publish(g); err != nil {
+		next.entry(e.ID).rebind(id, 1)
+		if err := s.publish(g, next); err != nil {
 			os.RemoveAll(s.worldDir(id))
 			return nil, err
 		}
-	} else if err := s.publish(g); err != nil {
-		return nil, err
+	} else {
+		next.entry(e.ID).Head = g.Number
+		if err := s.publish(g, next); err != nil {
+			return nil, err
+		}
 	}
 
 	// Alles, was dieser Stand braucht, ist jetzt referenziert.
@@ -693,31 +762,40 @@ func (s *Store) Generation(worldID string, n int64) (*api.Generation, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if worldID == s.cur.WorldID && n > s.cur.Head {
+	// Über dem Head einer Welt der Liste gibt es nur nie veröffentlichte Stände.
+	if e := s.entryOfStore(worldID); e != nil && e.Deleted.IsZero() && e.StoreWorld == worldID && n > e.Head {
 		return nil, fmt.Errorf("%w: Generation %s/%d", ErrNotFound, worldID, n)
 	}
 	return s.readGeneration(worldID, n)
 }
 
-// Activate macht die Welt worldID (ein Archiv) wieder zur aktiven Welt; ihr
-// Head ist ihre neueste Generation. Die bisher aktive Welt wird Archiv.
+// Activate macht die Weltkennung worldID (ein Archiv) wieder zur Weltkennung
+// ihrer Welt; ihr Head ist ihre neueste Generation. Die bisherige
+// Weltkennung dieser Welt wird Archiv. Gehört die Weltkennung zu keiner Welt
+// der Liste, ist das ErrNotFound; zu einer gelöschten Welt ErrDeleted.
 func (s *Store) Activate(worldID string) error {
 	if !validWorldID(worldID) {
 		return fmt.Errorf("%w: Welt %q", ErrInvalid, worldID)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if worldID == s.cur.WorldID {
+	e, err := s.ownerOfStore(worldID)
+	if err != nil {
+		return err
+	}
+	if e.StoreWorld == worldID {
 		return nil
 	}
 	g, err := s.newestGeneration(worldID)
 	if err != nil {
 		return err
 	}
-	if err := s.setCurrent(current{WorldID: worldID, Head: g.Number}); err != nil {
+	next := s.cloneCur()
+	next.entry(e.ID).rebind(worldID, g.Number)
+	if err := s.setCurrent(next); err != nil {
 		return err
 	}
-	s.head = g
+	s.heads[e.ID] = g
 	return nil
 }
 
@@ -737,19 +815,20 @@ func (s *Store) newestGeneration(worldID string) (*api.Generation, error) {
 // Restore holt den Stand target zurück: Sein Inhalt wird als neue
 // Generation Head seiner Welt (Elternteil ist deren bisheriger Head,
 // RestoredFrom nennt target, Host ist by). Liegt target in einem Archiv,
-// wird diese Welt dabei wieder die aktive – wie bei Activate, ohne
-// Neustart –, und die bisher aktive wird Archiv. Gelöscht wird nichts; ein
+// wird diese Weltkennung dabei wieder die ihrer Welt – wie bei Activate,
+// ohne Neustart –, und die bisherige wird Archiv. Gelöscht wird nichts; ein
 // Zurückholen lässt sich durch ein weiteres rückgängig machen.
 //
 // Geschrieben wird wie bei Commit unter derselben Sperre: erst die
 // Generationsdatei, dann current.json; schlägt etwas fehl, bleibt alles
 // beim Alten. Ein Absturz genau dazwischen lässt bei einem Archiv dort einen
-// zusätzlichen Stand (Kopie von target) liegen; die aktive Welt bleibt dann
+// zusätzlichen Stand (Kopie von target) liegen; die Welt bleibt dann
 // unverändert.
 //
-// Unbekannte Welt oder Generation (auch über dem Head der aktiven Welt) ist
-// ErrNotFound, eine ungültige Angabe ErrInvalid. Ob die Minecraft-Version
-// des Stands passt, prüft der Aufrufer.
+// Unbekannte Welt oder Generation (auch über dem Head einer Welt) ist
+// ErrNotFound, eine Welt, die ein Admin gelöscht hat, ErrDeleted, eine
+// ungültige Angabe ErrInvalid. Ob die Minecraft-Version des Stands passt,
+// prüft der Aufrufer.
 func (s *Store) Restore(target api.GenRef, by api.HostInfo, now time.Time) (*api.Generation, error) {
 	if !validWorldID(target.WorldID) || target.Number < 1 {
 		return nil, fmt.Errorf("%w: Stand %q/%d", ErrInvalid, target.WorldID, target.Number)
@@ -757,18 +836,25 @@ func (s *Store) Restore(target api.GenRef, by api.HostInfo, now time.Time) (*api
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	e, err := s.ownerOfStore(target.WorldID)
+	if err != nil {
+		return nil, err
+	}
 	var head *api.Generation
-	if target.WorldID == s.cur.WorldID {
-		if target.Number > s.cur.Head {
+	if target.WorldID == e.StoreWorld {
+		if target.Number > e.Head {
 			return nil, fmt.Errorf("%w: Generation %s/%d", ErrNotFound, target.WorldID, target.Number)
 		}
-		head = s.head
+		head = s.heads[e.ID]
 	} else {
 		h, err := s.newestGeneration(target.WorldID)
 		if err != nil {
 			return nil, err
 		}
 		head = h
+	}
+	if head == nil {
+		return nil, fmt.Errorf("%w: Welt %s", ErrNotFound, target.WorldID)
 	}
 	src, err := s.readGeneration(target.WorldID, target.Number)
 	if err != nil {
@@ -789,16 +875,19 @@ func (s *Store) Restore(target api.GenRef, by api.HostInfo, now time.Time) (*api
 		Files:            slices.Clone(src.Files),
 		RestoredFrom:     &from,
 	}
-	if err := s.publish(g); err != nil {
+	next := s.cloneCur()
+	next.entry(e.ID).rebind(target.WorldID, g.Number)
+	if err := s.publish(g, next); err != nil {
 		return nil, err
 	}
 	return cloneGen(g), nil
 }
 
-// Worlds liefert alle Welten mit den Angaben zu ihren Generationen: die
-// aktive zuerst, danach die Archive, das zuletzt bespielte (Zeit seiner
-// neuesten Generation) zuerst; je Welt die neueste Generation zuerst.
-// Welten ohne Generation fehlen.
+// Worlds liefert alle Weltkennungen mit den Angaben zu ihren Generationen:
+// die der Welten der Liste zuerst (in der Reihenfolge der Liste), danach
+// die Archive, das zuletzt bespielte (Zeit seiner neuesten Generation)
+// zuerst; je Weltkennung die neueste Generation zuerst. Weltkennungen ohne
+// Generation und die gelöschter Welten fehlen.
 //
 // Die Angaben einer Generation werden beim ersten Bedarf aus ihrer Datei
 // berechnet und danach im Speicher gehalten; eine Abfrage liest sonst nur
@@ -810,19 +899,33 @@ func (s *Store) Worlds() ([]WorldMeta, error) {
 	if err != nil {
 		return nil, fmt.Errorf("store: %w", err)
 	}
+	order := map[string]int{} // Weltkennung → Platz der Welt in der Liste
+	for i, e := range s.liveEntries() {
+		if e.StoreWorld != "" {
+			order[e.StoreWorld] = i
+		}
+	}
 	var out []WorldMeta
 	for _, e := range entries {
 		id := e.Name()
 		if !e.IsDir() || !validWorldID(id) {
 			continue
 		}
+		owner := s.entryOfStore(id)
+		if owner != nil && !owner.Deleted.IsZero() {
+			continue // Welt gelöscht
+		}
 		nums, _, err := s.scanGenerations(id)
 		if err != nil {
 			return nil, fmt.Errorf("store: %w", err)
 		}
-		w := WorldMeta{WorldID: id, Active: id == s.cur.WorldID}
+		w := WorldMeta{WorldID: id}
+		if owner != nil {
+			w.GroupWorld, w.GroupName = owner.ID, owner.Name
+			w.Active = owner.StoreWorld == id
+		}
 		for i := len(nums) - 1; i >= 0; i-- {
-			if w.Active && nums[i] > s.cur.Head {
+			if w.Active && nums[i] > owner.Head {
 				continue // nie veröffentlicht
 			}
 			m, err := s.genMeta(id, nums[i])
@@ -841,6 +944,9 @@ func (s *Store) Worlds() ([]WorldMeta, error) {
 				return -1
 			}
 			return 1
+		}
+		if a.Active {
+			return cmp.Compare(order[a.WorldID], order[b.WorldID])
 		}
 		return cmp.Or(b.Gens[0].Created.Compare(a.Gens[0].Created), strings.Compare(b.WorldID, a.WorldID))
 	})
@@ -1040,17 +1146,38 @@ func (s *Store) planPrune(now time.Time) (*prunePlan, error) {
 	keep := map[*api.Generation]bool{}
 	// activeExtras: Stunden- und Tagesstände der aktiven Welt außerhalb der
 	// letzten KeepLast.
-	var activeExtras, archived []*api.Generation
+	// Jede Welt der Liste zählt als aktive Welt (mit ihrem Head); die
+	// Weltkennungen gelöschter Welten fallen beim Budget zuerst, auch mit
+	// ihrem neuesten Stand (deleted).
+	activeHead := map[string]int64{}
+	deletedStore := map[string]bool{}
+	for _, e := range s.cur.Worlds {
+		switch {
+		case e.StoreWorld != "" && e.Deleted.IsZero():
+			activeHead[e.StoreWorld] = e.Head
+		case !e.Deleted.IsZero():
+			deletedStore[e.StoreWorld] = true
+			for _, p := range e.Previous {
+				deletedStore[p] = true
+			}
+		}
+	}
+	var activeExtras, archived, deleted []*api.Generation
 	for id, gens := range worlds { // gens ist nach Nummer sortiert
-		if id != s.cur.WorldID {
+		head, isActive := activeHead[id]
+		if !isActive {
 			for _, g := range gens {
 				keep[g] = true
 			}
-			archived = append(archived, gens[:len(gens)-1]...)
+			if deletedStore[id] {
+				deleted = append(deleted, gens...)
+			} else {
+				archived = append(archived, gens[:len(gens)-1]...)
+			}
 			continue
 		}
 		published := gens
-		for len(published) > 0 && published[len(published)-1].Number > s.cur.Head {
+		for len(published) > 0 && published[len(published)-1].Number > head {
 			published = published[:len(published)-1]
 		}
 		for _, g := range published[max(0, len(published)-KeepLast):] {
@@ -1087,17 +1214,20 @@ func (s *Store) planPrune(now time.Time) (*prunePlan, error) {
 	}
 	activeExtras = slices.DeleteFunc(activeExtras, isPinned)
 	archived = slices.DeleteFunc(archived, isPinned)
-	slices.SortFunc(activeExtras, func(a, b *api.Generation) int { return cmp.Compare(a.Number, b.Number) })
-	slices.SortFunc(archived, func(a, b *api.Generation) int {
+	deleted = slices.DeleteFunc(deleted, isPinned)
+	byAge := func(a, b *api.Generation) int {
 		return cmp.Or(a.Created.Compare(b.Created), strings.Compare(a.WorldID, b.WorldID), cmp.Compare(a.Number, b.Number))
-	})
+	}
+	slices.SortFunc(activeExtras, byAge)
+	slices.SortFunc(archived, byAge)
+	slices.SortFunc(deleted, byAge)
 
 	// Referenzen der behaltenen Generationen; total zählt jeden Blob einmal.
 	refs := newLiveSet(s)
 	for g := range keep {
 		refs.gen(g, +1)
 	}
-	for _, g := range slices.Concat(activeExtras, archived) {
+	for _, g := range slices.Concat(deleted, activeExtras, archived) {
 		if refs.total <= s.budget || refs.err != nil {
 			break
 		}
@@ -1296,7 +1426,10 @@ func (s *Store) readGeneration(worldID string, n int64) (*api.Generation, error)
 // publish schreibt die Generation g und macht sie danach zum Head – in
 // dieser Reihenfolge, damit current.json nie auf eine fehlende oder halbe
 // Generation zeigt.
-func (s *Store) publish(g *api.Generation) error {
+//
+// next ist der neue Inhalt von current.json, in dem die Welt von g schon auf
+// g zeigt (Weltkennung und Head).
+func (s *Store) publish(g *api.Generation, next current) error {
 	data, err := json.Marshal(g)
 	if err != nil {
 		return fmt.Errorf("store: %w", err)
@@ -1305,11 +1438,15 @@ func (s *Store) publish(g *api.Generation) error {
 	if err := writeAtomic(path, data); err != nil {
 		return fmt.Errorf("store: Generation schreiben: %w", err)
 	}
-	if err := s.setCurrent(current{WorldID: g.WorldID, Head: g.Number}); err != nil {
+	if err := s.setCurrent(next); err != nil {
 		os.Remove(path)
 		return err
 	}
-	s.head = g
+	for _, e := range next.Worlds {
+		if e.StoreWorld == g.WorldID && e.Deleted.IsZero() {
+			s.heads[e.ID] = g
+		}
+	}
 	s.meta[genKey{g.WorldID, g.Number}] = metaOf(g)
 	return nil
 }

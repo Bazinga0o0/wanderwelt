@@ -394,6 +394,12 @@ func (a *App) startTakeover(ctx context.Context, o *api.HandoverOffer, from stri
 	if err != nil {
 		return takeoverErr(ctx, err)
 	}
+	// Die Welt der Übergabe (nicht die gewählte): eigener Ordner und Zustand.
+	wc, err := a.worldFor(o.GroupWorld, in.c, o.GroupWorld != "")
+	if err != nil {
+		return takeoverErr(ctx, err)
+	}
+	in.bindWorld(wc)
 	in.score, _ = a.uebergabe.cachedScore()
 	if err := a.acquireWorld(ctx, "host"); err != nil {
 		return takeoverErr(ctx, err)
@@ -414,6 +420,7 @@ func (a *App) startTakeover(ctx context.Context, o *api.HandoverOffer, from stri
 		LeaseID:          o.LeaseID,
 		HeadGeneration:   o.HeadGeneration,
 		WorldID:          o.WorldID,
+		GroupWorld:       o.GroupWorld,
 		MinecraftAddress: o.MinecraftAddress,
 	}
 	stop() // ab jetzt schickt host.Run die Lebenszeichen

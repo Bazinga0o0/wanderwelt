@@ -174,6 +174,38 @@ type notfallEinstellung struct {
 	// NichtHochgeladen: Die Kopie enthält einen Stand, der nicht eingereicht
 	// werden konnte.
 	NichtHochgeladen bool `json:"nicht_hochgeladen,omitempty"`
+	// Welten: die Angaben zur letzten Kopie jeder weiteren Welt (Schlüssel:
+	// Kennung); die der ersten Welt stehen oben wie bisher.
+	Welten map[string]notfallLetzte `json:"welten,omitempty"`
+}
+
+// notfallLetzte sind die Angaben zur letzten Kopie einer weiteren Welt.
+type notfallLetzte struct {
+	WorldID          string    `json:"world_id,omitempty"`
+	Generation       int64     `json:"generation,omitempty"`
+	Zeit             time.Time `json:"zeit,omitzero"`
+	Groesse          int64     `json:"groesse,omitempty"`
+	NichtHochgeladen bool      `json:"nicht_hochgeladen,omitempty"`
+}
+
+// letzte liefert die Angaben zur letzten Kopie der Welt world.
+func (e notfallEinstellung) letzte(world string) notfallLetzte {
+	if group.DefaultWorld(world) {
+		return notfallLetzte{WorldID: e.WorldID, Generation: e.Generation, Zeit: e.Zeit, Groesse: e.Groesse, NichtHochgeladen: e.NichtHochgeladen}
+	}
+	return e.Welten[world]
+}
+
+// setzeLetzte merkt die Angaben zur letzten Kopie der Welt world.
+func (e *notfallEinstellung) setzeLetzte(world string, l notfallLetzte) {
+	if group.DefaultWorld(world) {
+		e.WorldID, e.Generation, e.Zeit, e.Groesse, e.NichtHochgeladen = l.WorldID, l.Generation, l.Zeit, l.Groesse, l.NichtHochgeladen
+		return
+	}
+	if e.Welten == nil {
+		e.Welten = map[string]notfallLetzte{}
+	}
+	e.Welten[world] = l
 }
 
 func notfallPfad() string { return filepath.Join(group.Dir(), notfallDatei) }
@@ -249,11 +281,14 @@ func (a *App) notfallZustand() fensterapi.Notfallkopie {
 	if rerr != nil {
 		return n
 	}
-	n.Ordner = filepath.Join(root, notfallOrdnerName())
+	// Gezeigt wird die Kopie der Welt, die „Spielen“ gerade nimmt.
+	world := a.weltZustand().Aktiv
+	n.Ordner = filepath.Join(root, notfallOrdnerNameFor(world))
 	if fi, err := os.Stat(n.Ordner); err == nil && fi.IsDir() {
 		n.Vorhanden = true
-		n.Zeit, n.Groesse, n.NichtHochgeladen = e.Zeit, e.Groesse, e.NichtHochgeladen
-		n.WorldID, n.Generation = e.WorldID, e.Generation
+		l := e.letzte(world)
+		n.Zeit, n.Groesse, n.NichtHochgeladen = l.Zeit, l.Groesse, l.NichtHochgeladen
+		n.WorldID, n.Generation = l.WorldID, l.Generation
 	}
 	return n
 }
@@ -377,11 +412,11 @@ func (a *App) notfallKopieren(ctx context.Context, c host.Committed) error {
 	if lerr != nil {
 		e = notfallEinstellung{}
 	}
-	e.WorldID, e.Generation, e.Zeit, e.Groesse, e.NichtHochgeladen = c.WorldID, c.Generation, notfallJetzt(), size, c.NotUploaded
+	e.setzeLetzte(c.GroupWorld, notfallLetzte{WorldID: c.WorldID, Generation: c.Generation, Zeit: notfallJetzt(), Groesse: size, NichtHochgeladen: c.NotUploaded})
 	if err := speichereNotfall(e); err != nil {
 		log.Printf("Notfallkopie: Angaben nicht gespeichert: %v", err)
 	}
-	log.Printf("Notfallkopie: Stand %s/%d (%s, hochgeladen: %v) in %s, %v", c.WorldID, c.Generation, humanSize(size), !c.NotUploaded, filepath.Join(root, notfallOrdnerName()), time.Since(began).Round(time.Millisecond))
+	log.Printf("Notfallkopie: Stand %s/%d (%s, hochgeladen: %v) in %s, %v", c.WorldID, c.Generation, humanSize(size), !c.NotUploaded, filepath.Join(root, notfallOrdnerNameFor(c.GroupWorld)), time.Since(began).Round(time.Millisecond))
 	return nil
 }
 
@@ -392,7 +427,7 @@ func schreibeNotfallkopie(ctx context.Context, root string, c host.Committed, no
 	if fi, err := os.Stat(c.Dir); err != nil || !fi.IsDir() {
 		return 0, fmt.Errorf("Stand %s nicht lesbar", c.Dir)
 	}
-	final := filepath.Join(root, notfallOrdnerName())
+	final := filepath.Join(root, notfallOrdnerNameFor(c.GroupWorld))
 	neu, alt := final+".neu", final+".alt"
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return 0, err

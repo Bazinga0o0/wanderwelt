@@ -33,6 +33,7 @@ func (q *aktionsQuelle) Speicherstaende(context.Context) ([]fensterapi.Speichers
 func (q *aktionsQuelle) Log(context.Context, int) (string, error)                 { return "", nil }
 func (q *aktionsQuelle) Mitglieder(context.Context) ([]api.MemberInfo, error)     { return nil, nil }
 func (q *aktionsQuelle) Beitritte(context.Context) ([]api.JoinRequestInfo, error) { return nil, nil }
+func (q *aktionsQuelle) Statistik(context.Context) (*api.Stats, error)            { return nil, nil }
 func (q *aktionsQuelle) Entdecken(context.Context, bool) (*fensterapi.Entdecken, error) {
 	return nil, nil
 }
@@ -85,8 +86,9 @@ func TestBedienung(t *testing.T) {
 	}
 
 	bild()
-	// Reihenfolge: Start, Welt, Hosten, Entdecken, Mitglieder, Log, dann „Spielen“.
-	vor(7)
+	// Reihenfolge: Start, Welt, Hosten, Entdecken, Mitglieder, Log, Statistik, Zustand (nur Admins), dann „Spielen“
+	// (mit Weltauswahl kommen deren Knöpfe davor, siehe TestWeltAuswahlTabFolge).
+	vor(9)
 	r.ClickFocus()
 	bild()
 	if got := warteAktionen(1); len(got) != 1 || got[0] != "play null" {
@@ -230,8 +232,8 @@ func TestGespeichertBleibt(t *testing.T) {
 	alt := z.Profil
 	b := neuerBedienTest(t, schnappschuss{verb: verbunden, runde: 1, z: z, mitglieder: beispielMitglieder()}, reiterHosten)
 	b.bild()
-	// Schalter Dauerbetrieb per Tastatur: sechs Reiter, C2ME, Dauerbetrieb.
-	for range 8 {
+	// Schalter Dauerbetrieb per Tastatur: acht Reiter, C2ME, Dauerbetrieb.
+	for range 10 {
 		b.r.MoveFocus(key.FocusForward)
 	}
 	if !b.r.Source().Focused(&b.u.hosten.dauer) {
@@ -279,7 +281,7 @@ func TestGespeichertBleibt(t *testing.T) {
 	b.u.reiter = reiterMitglieder
 	b.r = input.Router{}
 	b.bild()
-	for range 8 { // sechs Reiter, „ändern“ von Jonas, dann sein Admin-Schalter
+	for range 10 { // acht Reiter, „ändern“ von Jonas, dann sein Admin-Schalter
 		b.r.MoveFocus(key.FocusForward)
 	}
 	b.r.ClickFocus()
@@ -386,8 +388,8 @@ func TestBeitrittsanfragenBedienung(t *testing.T) {
 	b := neuerBedienTest(t, s, reiterMitglieder)
 	b.bild()
 
-	// Fokus: sechs Reiter, dann „Annehmen“ der ersten Anfrage.
-	for range 7 {
+	// Fokus: acht Reiter, dann „Annehmen“ der ersten Anfrage.
+	for range 9 {
 		b.r.MoveFocus(key.FocusForward)
 	}
 	b.r.ClickFocus()
