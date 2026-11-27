@@ -175,6 +175,9 @@ func (a *App) dauerbetriebTick() {
 // Hostet inzwischen doch ein anderer PC (er war schneller), antwortet der
 // Koordinator „join“; im Dauerbetrieb passiert dann nichts (play).
 func (a *App) autoPlay() bool {
+	if a.fortBlocksAuto() {
+		return false // erst bewerben sich alle gemeinsam nach der Wartung (fortsetzen.go)
+	}
 	a.dauer.mu.Lock()
 	paused, wait := a.dauer.paused, a.dauer.nextTry
 	a.dauer.mu.Unlock()

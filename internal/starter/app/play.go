@@ -17,6 +17,7 @@ import (
 	"github.com/Bazinga0o0/wanderwelt/internal/starter/bench"
 	"github.com/Bazinga0o0/wanderwelt/internal/starter/client"
 	"github.com/Bazinga0o0/wanderwelt/internal/starter/deps"
+	"github.com/Bazinga0o0/wanderwelt/internal/starter/fensterapi"
 	"github.com/Bazinga0o0/wanderwelt/internal/starter/group"
 	"github.com/Bazinga0o0/wanderwelt/internal/starter/host"
 	"github.com/Bazinga0o0/wanderwelt/internal/starter/mcserver"
@@ -52,12 +53,24 @@ func openLauncher() string {
 // Ein pausierter Dauerbetrieb läuft danach wieder.
 func (a *App) Play() {
 	a.resumeDauerbetrieb("Spielen")
+	// Ein ausdrückliches „Spielen“ ersetzt das automatische Fortsetzen nach
+	// einer Wartung.
+	a.fortVerwerfen("Spielen")
 	a.startPlay(0)
 }
 
 // startPlay startet „Spielen“; auto zählt, wie oft es schon von selbst neu
 // gefragt hat (Host verschwunden).
 func (a *App) startPlay(auto int) {
+	if a.fortRunning() {
+		// Die Bewerbung nach der Wartung wird abgebrochen (Play hat den Merker
+		// schon verworfen); das Warten darauf blockiert nicht den Tray.
+		go func() {
+			a.fortAbort("Spielen")
+			a.startPlay(auto)
+		}()
+		return
+	}
 	a.mu.Lock()
 	hosting, addr := a.hostCancel != nil, a.hostAddr
 	joined := a.joinDauerPlayLocked()
@@ -101,6 +114,9 @@ type playInput struct {
 	paths   *deps.Paths
 	profile api.Profile
 	score   api.Score
+	// fort: Bewerbung nach einer Wartung (fortsetzen.go): kein Launcher von
+	// selbst, eigene Hinweistexte.
+	fort bool
 }
 
 // play: Abhängigkeiten → Messung → Play → Host oder Mitspieler. Als
@@ -112,12 +128,29 @@ type playInput struct {
 // Host öffnet sich der Launcher nicht von selbst. Kam inzwischen „Spielen“
 // (dauerState.manual), gilt das alles nicht: dann wie gewöhnliches Spielen.
 func (a *App) play(ctx context.Context, auto int, dauer bool) error {
+	return a.playWith(ctx, auto, dauer, nil)
+}
+
+// playWith ist play; fp: Bewerbung nach einer Wartung (fortsetzen.go). Sie
+// geht denselben Weg, nur mit der Welt des Merkers, mit Warten auf den Beginn
+// des gemeinsamen Fensters (nach Manifest, Abhängigkeiten und Messung), mit
+// den Bedingungen kurz vor der Anfrage und mit PlayRequest.Resume; als Host
+// und Mitspieler öffnet sich der Launcher nicht von selbst, und eine
+// Ablehnung bleibt still.
+func (a *App) playWith(ctx context.Context, auto int, dauer bool, fp *fortPlay) error {
 	in, err := a.prepare(ctx)
 	if err != nil {
 		return err
 	}
-	// Welche Welt: die laufende, sonst die gewählte, sonst die erste.
-	wc, err := a.pickWorld(ctx, in.c)
+	// Welche Welt: die laufende, sonst die gewählte, sonst die erste (beim
+	// Fortsetzen die des Merkers).
+	var wc worldCtx
+	if fp != nil {
+		in.fort = true
+		wc, err = a.fortWelt(ctx, in.c, fp.m)
+	} else {
+		wc, err = a.pickWorld(ctx, in.c)
+	}
 	if err != nil {
 		return err
 	}
@@ -131,12 +164,17 @@ func (a *App) play(ctx context.Context, auto int, dauer bool) error {
 	log.Printf("Messung: %+v", in.score)
 	a.uebergabe.setScore(in.score, in.profile.XmxMB) // dieselbe Messung gilt für die Bereitschaft
 
+	if fp != nil {
+		if err := a.fortWarten(ctx, in.c, fp); err != nil {
+			return err
+		}
+	}
 	if err := a.acquireWorld(ctx, "host"); err != nil {
 		return err
 	}
 	a.setPhase(phStarting, "fragt den Koordinator …")
 	resp, err := retry401(ctx, func() (*api.PlayResponse, error) {
-		return in.c.Play(ctx, api.PlayRequest{MachineID: in.st.MachineID, Score: in.score})
+		return in.c.Play(ctx, api.PlayRequest{MachineID: in.st.MachineID, Score: in.score, Resume: fp != nil})
 	})
 	if err != nil {
 		a.releaseWorld()
@@ -165,6 +203,15 @@ func (a *App) play(ctx context.Context, auto int, dauer bool) error {
 	case api.RoleDenied:
 		a.releaseWorld()
 		a.setPhase(phReady, "")
+		if fp != nil {
+			// Still: Das Fenster war zu, oder die Welt geht gerade nicht; wer
+			// spielen will, klickt „Spielen“.
+			log.Printf("Fortsetzen: der Koordinator lehnt ab: %s", cmp.Or(resp.Reason, "ohne Grund"))
+			if resp.Reason != api.ReasonResumeClosed {
+				go notify("Das Hosten wurde nach der Wartung nicht fortgesetzt: " + cmp.Or(resp.Reason, "der Koordinator lehnt ab"))
+			}
+			return nil
+		}
 		if dauer {
 			return fmt.Errorf("der Koordinator lehnt ab: %s", cmp.Or(resp.Reason, "ohne Grund"))
 		}
@@ -289,8 +336,9 @@ func (a *App) startJoin(in playInput, resp *api.PlayResponse, auto int) {
 	a.joinSeq++
 	seq := a.joinSeq
 	a.joinCancel = cancel
+	a.joinWorld = in.world
 	a.mu.Unlock()
-	go a.watchJoin(ctx, cancel, seq, in.c, host, addr, auto)
+	go a.watchJoin(ctx, cancel, seq, in.c, host, addr, auto, in.fort)
 }
 
 // stopJoinWatch beendet die Beobachtung des Hosts als Mitspieler.
@@ -307,7 +355,7 @@ func (a *App) stopJoinWatch() {
 // watchJoin beobachtet als Mitspieler den Host (watchHost): Ist er bereit,
 // Launcher öffnen und „Server bereit“ zeigen; verschwindet er, von selbst
 // noch einmal „Spielen“ (höchstens maxAutoPlay-mal hintereinander).
-func (a *App) watchJoin(ctx context.Context, cancel context.CancelFunc, seq int, c *client.Client, host api.HostInfo, addr string, auto int) {
+func (a *App) watchJoin(ctx context.Context, cancel context.CancelFunc, seq int, c *client.Client, host api.HostInfo, addr string, auto int, fort bool) {
 	defer func() {
 		cancel()
 		a.mu.Lock()
@@ -326,6 +374,9 @@ func (a *App) watchJoin(ctx context.Context, cancel context.CancelFunc, seq int,
 			}
 			a.mu.Unlock()
 			a.refresh()
+			// Nennt der Status eine Wartung, merkt sich dieser Mitspieler sie
+			// (Fortsetzen), noch bevor der Host stoppt und „weg“ gemeldet wird.
+			a.fortNote(st)
 		}
 		return st, err
 	}, host.Email, joinPoll, joinWatch, joinReadyMax, func(*api.Status) {
@@ -335,7 +386,13 @@ func (a *App) watchJoin(ctx context.Context, cancel context.CancelFunc, seq int,
 		}
 		a.mu.Unlock()
 		a.refresh()
-		text := name + " hostet – Server bereit, verbinde mit " + addr + " (Profil wanderwelt)." + openLauncher()
+		var text string
+		if fort {
+			// Nach der Wartung: kein Launcher von selbst.
+			text = name + " hostet nach der Wartung wieder – Server bereit, verbinde mit " + addr + " (Profil wanderwelt)."
+		} else {
+			text = name + " hostet – Server bereit, verbinde mit " + addr + " (Profil wanderwelt)." + openLauncher()
+		}
 		go notify(text)
 	})
 	switch res {
@@ -496,7 +553,7 @@ func (a *App) startHost(in playInput, resp *api.PlayResponse, dauer bool, ov *ov
 		DownloadProgress: pr.report,
 		OnReady: func() {
 			a.dauerReady()
-			go a.serverReady(addr, in.m.MinecraftVersion, dauer, ov)
+			go a.serverReadyMode(addr, in.m.MinecraftVersion, dauer, ov, in.fort)
 		},
 		Discarded: func(de *host.DiscardedError) { go notify(discardText(de)) },
 		// Bei jeder Entscheidung der Sitzung neu gefragt: Haken im Profil
@@ -528,6 +585,11 @@ func (a *App) startHost(in playInput, resp *api.PlayResponse, dauer bool, ov *ov
 		a.hostCancel, a.hostDone = nil, nil
 		a.mu.Unlock()
 		a.releaseWorld()
+		if me, ok := errors.AsType[*host.MaintenanceError](err); ok {
+			// Das Ende wegen Wartung (nie ein Ende durch den Nutzer): merken, damit
+			// nach der Wartung gemeinsam fortgesetzt wird (fortsetzen.go).
+			a.fortMerken(fensterapi.RolleHost, in.world, me.Maintenance.Since)
+		}
 		if err == nil && gave != "" && !pending {
 			// Übergeben: kein Schluss-Stand, der neue Host hat die Welt.
 			log.Printf("Host-Sitzung beendet: an %s übergeben", gave)
@@ -542,6 +604,12 @@ func (a *App) startHost(in playInput, resp *api.PlayResponse, dauer bool, ov *ov
 // serverReady: Der Server läuft; Launcher-Profil, Hinweis, Launcher (vom
 // Dauerbetrieb gestartet: nur der Hinweis, der Launcher bleibt zu).
 func (a *App) serverReady(addr, version string, dauer bool, ov *overtake) {
+	a.serverReadyMode(addr, version, dauer, ov, false)
+}
+
+// serverReadyMode ist serverReady; fort: Hosten nach einer Wartung wieder
+// aufgenommen (nur der Hinweis, der Launcher bleibt zu).
+func (a *App) serverReadyMode(addr, version string, dauer bool, ov *overtake, fort bool) {
 	a.mu.Lock()
 	if a.hostCancel == nil {
 		a.mu.Unlock()
@@ -556,6 +624,10 @@ func (a *App) serverReady(addr, version string, dauer bool, ov *overtake) {
 	if ov != nil {
 		// Die Spieler kommen vom alten Host herüber; der Launcher ist offen.
 		notify("Hosten übernommen – der Server ist bereit, deine Mitspieler kommen gleich von " + ov.from + " herüber.")
+		return
+	}
+	if fort {
+		notify("Hosten nach der Wartung fortgesetzt – der Server ist bereit, erreichbar unter " + addr + " (Profil wanderwelt).")
 		return
 	}
 	if dauer {
@@ -592,6 +664,9 @@ func (a *App) hostEnded(err error, pending, saved, dauer bool) {
 		text := "Wartung am Server – der Stand ist hochgeladen. Spielen ist gleich wieder möglich."
 		if me, ok := errors.AsType[*host.MaintenanceError](err); ok && me.Maintenance.Reason != "" {
 			text = "Wartung am Server (" + me.Maintenance.Reason + ") – der Stand ist hochgeladen. Spielen ist gleich wieder möglich."
+		}
+		if a.fortPending() {
+			text += " Danach setzt wanderwelt das Hosten automatisch fort (Tray: „" + fensterapi.FortsetzenAbbrechenLabel + "“)."
 		}
 		a.setPhase(phReady, "")
 		go notify(text)
@@ -703,6 +778,7 @@ func (a *App) endHosting(why string) {
 // zu Ende ist (winsys wartet höchstens FinishTimeout).
 func (a *App) finishForShutdown() {
 	began := time.Now()
+	a.fortVerwerfen("Windows fährt herunter")
 	a.mu.Lock()
 	// Ab jetzt startet der Dauerbetrieb nichts mehr von selbst; ein
 	// abgebrochenes Herunterfahren setzt das zurück (sessionEnded).

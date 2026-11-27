@@ -36,7 +36,18 @@ type PlayRequest struct {
 	// wenn der Koordinator eine Weltliste kennt (Status.Worlds): Ein
 	// älterer Koordinator lehnt unbekannte Felder ab.
 	GroupWorld string `json:"group_world,omitempty"`
+	// Resume: automatische Bewerbung nach einer Wartung (Fortsetzen); der
+	// Starter schickt sie nur, wenn der Status des Koordinators ein Resume
+	// trug (ein älterer Koordinator lehnt unbekannte Felder ab). Ohne
+	// offenes Fenster antwortet der Koordinator mit "denied" und
+	// ReasonResumeClosed.
+	Resume bool `json:"resume,omitempty"`
 }
+
+// ReasonResumeClosed ist der Grund von "denied", wenn eine Bewerbung mit
+// PlayRequest.Resume kein offenes Fortsetzen-Fenster findet; der Starter
+// zeigt dazu nichts an.
+const ReasonResumeClosed = "Das automatische Fortsetzen nach der Wartung ist nicht (mehr) möglich"
 
 // PlayResponse ist die Antwort auf PlayRequest.
 type PlayResponse struct {
@@ -64,15 +75,45 @@ var (
 	Difficulties = []string{"peaceful", "easy", "normal", "hard"}
 )
 
+// Chat-Verlauf je Welt (Server-Mod mods/chatverlauf): Größengrenze in MiB.
+// ChatMiB 0 heißt Standard (ChatMiBStandard).
+const (
+	ChatMiBStandard = 5
+	ChatMiBMin      = 1
+	ChatMiBMax      = 50
+)
+
+// ChatMiBOrDefault liefert die wirksame Größengrenze: 0 ergibt den Standard.
+func ChatMiBOrDefault(mib int) int {
+	if mib == 0 {
+		return ChatMiBStandard
+	}
+	return mib
+}
+
+// ChatSettings ist die Chat-Einstellung, die der Host in die Konfig-Datei
+// der Mod schreibt (HostSettings.Chat). Off: Verlauf aus (die Mod schreibt
+// und spielt nichts wieder; vorhandene Dateien bleiben liegen); MiB: wirksame
+// Größengrenze (nie 0).
+type ChatSettings struct {
+	Off bool `json:"off"`
+	MiB int  `json:"mib"`
+}
+
 // GroupWorld ist eine Welt der Gruppe (Eintrag der Weltliste). ID ist stabil
 // (w1, w2, …). HeadGeneration/HeadCreated: der neueste Stand der Welt
 // (0 und Nullzeit, solange sie leer ist, Empty). Running: Die Welt läuft
 // gerade (Host oder Sammelfenster).
 type GroupWorld struct {
-	ID             string    `json:"id"`
-	Name           string    `json:"name"`
-	Gamemode       string    `json:"gamemode,omitempty"`
-	Difficulty     string    `json:"difficulty,omitempty"`
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Gamemode   string `json:"gamemode,omitempty"`
+	Difficulty string `json:"difficulty,omitempty"`
+	// ChatOff: Chat-Verlauf dieser Welt ist aus; ChatMiB: Größengrenze in
+	// MiB (0 = Standard, ChatMiBStandard). Fehlen beide (älterer
+	// Koordinator), gilt „an, 5 MiB“.
+	ChatOff        bool      `json:"chat_off,omitempty"`
+	ChatMiB        int       `json:"chat_mib,omitempty"`
 	HeadGeneration int64     `json:"head_generation"`
 	HeadCreated    time.Time `json:"head_created,omitzero"`
 	Empty          bool      `json:"empty,omitempty"`
@@ -92,6 +133,8 @@ type WorldCreate struct {
 	Name       string `json:"name"`
 	Gamemode   string `json:"gamemode,omitempty"`
 	Difficulty string `json:"difficulty,omitempty"`
+	ChatOff    bool   `json:"chat_off,omitempty"`
+	ChatMiB    int    `json:"chat_mib,omitempty"` // 0 = Standard
 }
 
 // WorldPatch ändert eine Welt (PATCH /v1/worlds/{id}, nur Admins); fehlende
@@ -101,6 +144,10 @@ type WorldPatch struct {
 	Name       *string `json:"name,omitempty"`
 	Gamemode   *string `json:"gamemode,omitempty"`
 	Difficulty *string `json:"difficulty,omitempty"`
+	// ChatOff und ChatMiB (0 = Standard, sonst ChatMiBMin–ChatMiBMax) ändern
+	// den Chat-Verlauf der Welt.
+	ChatOff *bool `json:"chat_off,omitempty"`
+	ChatMiB *int  `json:"chat_mib,omitempty"`
 }
 
 // HostInfo beschreibt den aktuellen Host.
@@ -155,6 +202,9 @@ type Status struct {
 	Handover *HandoverState `json:"handover,omitempty"`
 	// Maintenance: Wartung am Server (angekündigt oder laufend); nil ohne.
 	Maintenance *Maintenance `json:"maintenance,omitempty"`
+	// Resume: Fortsetzen-Fenster nach einer Wartung (siehe Resume); nil
+	// ohne. Ältere Koordinatoren kennen es nicht.
+	Resume *Resume `json:"resume,omitempty"`
 	// Members: Zahl der Gruppenmitglieder (ohne offene Beitrittsanfragen, ohne
 	// Namen); 0: ältere Koordinatoren kennen das Feld nicht.
 	Members int `json:"members,omitempty"`
@@ -199,6 +249,19 @@ type Maintenance struct {
 	StopAt     time.Time `json:"stop_at"`
 	Since      time.Time `json:"since"`
 	RemainingS int64     `json:"remaining_s"`
+}
+
+// Resume ist das Fortsetzen-Fenster, das der Koordinator beim Ende einer
+// Wartung öffnet: Starter, die bei Wartungsbeginn hosteten oder mitspielten,
+// bewerben sich alle zum selben Zeitpunkt (OpensInS) um das Hosten; die
+// gewöhnliche Wahl des Besten (Sammelfenster) entscheidet. Since ist die
+// Kennung der Wartung (Maintenance.Since). Die Zeiten sind Restsekunden nach
+// der Uhr des Koordinators (die Uhren der PCs können abweichen); OpensInS ist
+// 0, sobald das Fenster begonnen hat, UntilInS die Zeit bis zum Verfall.
+type Resume struct {
+	Since    time.Time `json:"since"`
+	OpensInS int64     `json:"opens_in_s"`
+	UntilInS int64     `json:"until_in_s"`
 }
 
 // Stufen von HealthWarning.Level.
@@ -422,6 +485,9 @@ type HostSettings struct {
 	Ops               []Player          `json:"ops"`
 	SnapshotIntervalS int               `json:"snapshot_interval_s,omitempty"`
 	EmptyTimeoutS     int               `json:"empty_timeout_s,omitempty"`
+	// Chat: Chat-Einstellung der Zuschlags-Welt. nil (älterer Koordinator):
+	// Der Host lässt die Konfig-Datei der Chatverlauf-Mod unberührt.
+	Chat *ChatSettings `json:"chat,omitempty"`
 }
 
 // Erlaubter Abstand der Zwischenstände in Sekunden (1–30 Minuten).

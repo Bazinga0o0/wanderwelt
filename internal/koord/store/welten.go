@@ -46,10 +46,15 @@ var ErrLastWorld = fmt.Errorf("%w: die letzte Welt der Gruppe lässt sich nicht 
 
 // WorldEntry ist eine Welt der Liste (siehe Paketkommentar).
 type WorldEntry struct {
-	ID         string    `json:"id"`
-	Name       string    `json:"name"`
-	Gamemode   string    `json:"gamemode"`
-	Difficulty string    `json:"difficulty"`
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Gamemode   string `json:"gamemode"`
+	Difficulty string `json:"difficulty"`
+	// Chat-Verlauf der Welt (Server-Mod chatverlauf): ChatOff = aus,
+	// ChatMiB = Größengrenze (0 = Standard). Ältere current.json ohne die
+	// Felder = an, Standardgröße.
+	ChatOff    bool      `json:"chat_off,omitempty"`
+	ChatMiB    int       `json:"chat_mib,omitempty"`
 	Created    time.Time `json:"created"`
 	StoreWorld string    `json:"store_world"` // Weltkennung; "": noch leer
 	Head       int64     `json:"head"`
@@ -119,6 +124,18 @@ func checkProps(gamemode, difficulty string) error {
 	return nil
 }
 
+// ValidChatMiB meldet, ob n eine erlaubte Größengrenze des Chat-Verlaufs ist
+// (0 = Standard).
+func ValidChatMiB(n int) bool { return n == 0 || (n >= api.ChatMiBMin && n <= api.ChatMiBMax) }
+
+func checkChat(mib int) error {
+	if !ValidChatMiB(mib) {
+		return fmt.Errorf("%w: Größengrenze des Chat-Verlaufs %d MiB (erlaubt: %d bis %d, 0 = Standard)",
+			ErrInvalid, mib, api.ChatMiBMin, api.ChatMiBMax)
+	}
+	return nil
+}
+
 // validEntryID: Kennung einer Welt der Liste (w<Ziffern>).
 func validEntryID(s string) bool {
 	if len(s) < 2 || len(s) > 12 || s[0] != 'w' {
@@ -153,6 +170,9 @@ func checkCurrent(c current) error {
 		}
 		if !ValidGamemode(e.Gamemode) || !ValidDifficulty(e.Difficulty) {
 			return fmt.Errorf("Welt %s: Spielmodus %q oder Schwierigkeit %q", e.ID, e.Gamemode, e.Difficulty)
+		}
+		if !ValidChatMiB(e.ChatMiB) {
+			return fmt.Errorf("Welt %s: Größengrenze des Chat-Verlaufs %d MiB", e.ID, e.ChatMiB)
 		}
 		for _, id := range append([]string{e.StoreWorld}, e.Previous...) {
 			if id == "" {
@@ -303,11 +323,20 @@ func (s *Store) nameTaken(name, except string) bool {
 // muss je Gruppe eindeutig sein (ohne Groß-/Kleinschreibung), sonst
 // ErrConflict.
 func (s *Store) AddGroupWorld(name, gamemode, difficulty string, now time.Time) (WorldEntry, error) {
+	return s.AddGroupWorldChat(name, gamemode, difficulty, false, 0, now)
+}
+
+// AddGroupWorldChat wie AddGroupWorld, mit Chat-Einstellung (chatOff, chatMiB;
+// 0 = Standard).
+func (s *Store) AddGroupWorldChat(name, gamemode, difficulty string, chatOff bool, chatMiB int, now time.Time) (WorldEntry, error) {
 	name, err := CleanWorldName(name)
 	if err != nil {
 		return WorldEntry{}, err
 	}
 	if err := checkProps(gamemode, difficulty); err != nil {
+		return WorldEntry{}, err
+	}
+	if err := checkChat(chatMiB); err != nil {
 		return WorldEntry{}, err
 	}
 	s.mu.Lock()
@@ -317,6 +346,7 @@ func (s *Store) AddGroupWorld(name, gamemode, difficulty string, now time.Time) 
 	}
 	next := s.cloneCur()
 	e := newEntry(&next, name, gamemode, difficulty, now)
+	e.ChatOff, e.ChatMiB = chatOff, chatMiB
 	next.Worlds = append(next.Worlds, e)
 	if err := s.setCurrent(next); err != nil {
 		return WorldEntry{}, err
@@ -329,6 +359,8 @@ type WorldPatch struct {
 	Name       *string
 	Gamemode   *string
 	Difficulty *string
+	ChatOff    *bool
+	ChatMiB    *int
 }
 
 // UpdateGroupWorld ändert Name und Eigenschaften der Welt id. Die Welt
@@ -357,7 +389,16 @@ func (s *Store) UpdateGroupWorld(id string, p WorldPatch) (WorldEntry, error) {
 	if p.Difficulty != nil {
 		e.Difficulty = *p.Difficulty
 	}
+	if p.ChatOff != nil {
+		e.ChatOff = *p.ChatOff
+	}
+	if p.ChatMiB != nil {
+		e.ChatMiB = *p.ChatMiB
+	}
 	if err := checkProps(e.Gamemode, e.Difficulty); err != nil {
+		return WorldEntry{}, err
+	}
+	if err := checkChat(e.ChatMiB); err != nil {
 		return WorldEntry{}, err
 	}
 	next := s.cloneCur()

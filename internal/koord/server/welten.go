@@ -75,6 +75,7 @@ func (s *Server) worldList(running string) []api.GroupWorld {
 		_, n, created := s.st.HeadInfoOf(e.ID)
 		out = append(out, api.GroupWorld{
 			ID: e.ID, Name: e.Name, Gamemode: e.Gamemode, Difficulty: e.Difficulty,
+			ChatOff: e.ChatOff, ChatMiB: e.ChatMiB,
 			HeadGeneration: n, HeadCreated: created, Empty: e.Empty(), Running: e.ID == running,
 		})
 	}
@@ -117,7 +118,7 @@ func (s *Server) handleWorldCreate(w http.ResponseWriter, r *http.Request) {
 	if !s.decode(w, r, maxJSONBody, &req) {
 		return
 	}
-	e, err := s.st.AddGroupWorld(req.Name, req.Gamemode, req.Difficulty, s.now())
+	e, err := s.st.AddGroupWorldChat(req.Name, req.Gamemode, req.Difficulty, req.ChatOff, req.ChatMiB, s.now())
 	if err != nil {
 		s.storeError(w, "Welt anlegen", err)
 		return
@@ -135,13 +136,14 @@ func (s *Server) handleWorldPatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
-	e, err := s.st.UpdateGroupWorld(id, store.WorldPatch{Name: req.Name, Gamemode: req.Gamemode, Difficulty: req.Difficulty})
+	e, err := s.st.UpdateGroupWorld(id, store.WorldPatch{
+		Name: req.Name, Gamemode: req.Gamemode, Difficulty: req.Difficulty, ChatOff: req.ChatOff, ChatMiB: req.ChatMiB})
 	if err != nil {
 		s.storeError(w, "Welt ändern", err)
 		return
 	}
 	s.log.Info("Welt geändert", "welt", e.ID, "name", e.Name, "spielmodus", e.Gamemode, "schwierigkeit", e.Difficulty,
-		"admin", identityOf(r).member.Email)
+		"chat_aus", e.ChatOff, "chat_mib", api.ChatMiBOrDefault(e.ChatMiB), "admin", identityOf(r).member.Email)
 	writeJSON(w, http.StatusOK, s.groupWorld(e.ID))
 }
 

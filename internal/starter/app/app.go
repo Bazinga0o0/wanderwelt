@@ -198,8 +198,11 @@ type App struct {
 
 	joinCancel context.CancelFunc // beobachtet als Mitspieler den Host (watchJoin)
 	joinSeq    int
+	joinWorld  string // Welt, die dieser PC als Mitspieler beobachtet (für den Merker des Fortsetzens)
 
 	dauer dauerState // Dauerbetrieb (dauerbetrieb.go)
+
+	fort fortState // Hosten nach der Wartung fortsetzen (fortsetzen.go)
 
 	uebergabe uebergabeState // Host-Übergabe (uebergabe.go)
 

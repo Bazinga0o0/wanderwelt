@@ -548,3 +548,23 @@ func TestBridgeLeaseLostAbortsTakeover(t *testing.T) {
 		t.Fatalf("%d Fehlerhinweise: %q", n, notes())
 	}
 }
+
+func TestMitClientReserve(t *testing.T) {
+	base := api.Score{RAMFreeMB: 20000, RAMTotalMB: 32768}
+	// Minecraft läuft schon: gemessener Wert gilt (sein RAM ist schon abgezogen).
+	if got := mitClientReserve(base, true, true); got.RAMFreeMB != 20000 {
+		t.Errorf("läuft: RAMFreeMB = %d, erwartet 20000", got.RAMFreeMB)
+	}
+	// Minecraft läuft nicht: Client-Reserve abziehen, Gesamt-RAM bleibt.
+	if got := mitClientReserve(base, false, true); got.RAMFreeMB != 20000-clientReserveMB || got.RAMTotalMB != 32768 {
+		t.Errorf("läuft nicht: %+v", got)
+	}
+	// Unbekannt (Prozessliste nicht lesbar): nichts ändern.
+	if got := mitClientReserve(base, false, false); got.RAMFreeMB != 20000 {
+		t.Errorf("unbekannt: RAMFreeMB = %d, erwartet 20000", got.RAMFreeMB)
+	}
+	// Nie unter 0.
+	if got := mitClientReserve(api.Score{RAMFreeMB: 1000}, false, true); got.RAMFreeMB != 0 {
+		t.Errorf("klein: RAMFreeMB = %d, erwartet 0", got.RAMFreeMB)
+	}
+}

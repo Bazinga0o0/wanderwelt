@@ -39,6 +39,11 @@ type trayMenu struct {
 	// dauer: Haken „Dauerbetrieb“; dauerShown ist der angezeigte Stand.
 	dauer      *systray.MenuItem
 	dauerShown bool
+
+	// fort: „Fortsetzen abbrechen“ (nur sichtbar mit Merker, fortsetzen.go);
+	// fortShown ist der angezeigte Stand.
+	fort      *systray.MenuItem
+	fortShown bool
 }
 
 // runTray zeigt das Tray-Symbol und blockiert, bis „Beenden“ fertig ist.
@@ -70,6 +75,8 @@ func (a *App) onTrayReady() {
 	m.stopHosting = true
 	m.stopPlain = systray.AddMenuItem("Hosten ohne Weitergabe beenden", "Server für alle stoppen, die Welt nicht an einen Mitspieler übergeben")
 	m.stopPlain.Hide()
+	m.fort = systray.AddMenuItem(fensterapi.FortsetzenAbbrechenLabel, "Das Hosten nach der Wartung nicht automatisch fortsetzen")
+	m.fort.Hide()
 	m.dauerShown = a.dauer.on.Load()
 	m.dauer = systray.AddMenuItemCheckbox("Dauerbetrieb (Server auch ohne Spieler)",
 		"Dieser PC hostet von selbst, sobald niemand hostet, auch ohne Spieler – nur am Netz", m.dauerShown)
@@ -80,6 +87,9 @@ func (a *App) onTrayReady() {
 	m.profile = systray.AddMenuItem("Profil öffnen", "Leistungsprofil im Editor öffnen")
 	m.logs = systray.AddMenuItem("Log öffnen", "Log des Starters im Editor öffnen")
 	systray.AddSeparator()
+	if v := a.versionText(); v != "" {
+		systray.AddMenuItem(v, "Installierte Version von wanderwelt").Disable()
+	}
 	m.quit = systray.AddMenuItem("Beenden", "wanderwelt beenden")
 	log.Printf("Tray bereit: %v %v %v %v %v %v %v", m.play, m.stop, m.group, m.importW, m.profile, m.logs, m.quit)
 	a.updateTray(m)
@@ -93,6 +103,8 @@ func (a *App) onTrayReady() {
 				a.Play()
 			case <-a.playCh:
 				a.Play()
+			case <-m.fort.ClickedCh:
+				go a.fortAbbrechen()
 			case <-m.stopPlain.ClickedCh:
 				go a.stopHostingPlain(true)
 			case <-m.stop.ClickedCh:
@@ -147,13 +159,14 @@ func (a *App) updateTray(m *trayMenu) {
 	hosting := a.hostCancel != nil
 	busy := a.busy
 	a.mu.Unlock()
+	fort := a.fortPending()
 
 	if !m.iconSet || m.shownIcon != ph {
 		systray.SetIcon(phaseIcon(ph))
 		m.iconSet, m.shownIcon = true, ph
 	}
 
-	line1 := "wanderwelt" + a.trayGruppe() + " – " + ph.String()
+	line1 := "wanderwelt" + a.trayVersion() + a.trayGruppe() + " – " + ph.String()
 	switch {
 	case ph == phError && lastErr != "":
 		line1 += ": " + lastErr
@@ -166,8 +179,12 @@ func (a *App) updateTray(m *trayMenu) {
 		line2 = "Koordinator nicht erreichbar"
 	case status == nil:
 		line2 = ""
+	case status.Maintenance != nil && fort:
+		line2 = fensterapi.WartungTrayFortsetzen
 	case status.Maintenance != nil:
 		line2 = fensterapi.WartungTray
+	case fort && status.Handover == nil && status.Host == nil:
+		line2 = fensterapi.FortsetzenTray
 	case status.Handover != nil:
 		line2 = fensterapi.UebergabeText(status.Handover)
 	case status.Host == nil:
@@ -205,7 +222,16 @@ func (a *App) updateTray(m *trayMenu) {
 		}
 		m.plainShown = hosting
 	}
-	if busy != "" && !hosting {
+	if fort != m.fortShown {
+		if fort {
+			m.fort.Show()
+		} else {
+			m.fort.Hide()
+		}
+		m.fortShown = fort
+	}
+	// Die Bewerbung nach der Wartung sperrt „Spielen“ nicht: Ein Klick ersetzt sie.
+	if busy != "" && busy != fortLabel && !hosting {
 		m.play.Disable()
 	} else {
 		m.play.Enable()
@@ -271,6 +297,12 @@ func (a *App) pollStatus(refreshMe bool) {
 	if err != nil && a.ctx.Err() == nil {
 		log.Printf("Status: %v", err)
 	}
+	// Fortsetzen nach der Wartung (fortsetzen.go): vor dem Zurücksetzen der
+	// Phase unten, damit ein Mitspieler seine Wartung noch merkt.
+	fortsetzt := false
+	if err == nil && a.client() == c {
+		fortsetzt = a.fortNote(st)
+	}
 	a.mu.Lock()
 	// Admins fragen Me jedes Mal: Es trägt die Zahl der Beitrittsanfragen.
 	needMe := a.me == nil || refreshMe || a.me.Admin
@@ -289,7 +321,12 @@ func (a *App) pollStatus(refreshMe bool) {
 	a.mu.Unlock()
 	if wartungVorbei {
 		log.Printf("Wartung am Server vorbei")
-		go notify("Wartung vorbei, ihr könnt wieder spielen.")
+		if fortsetzt {
+			go notify("Wartung vorbei – wanderwelt setzt das Hosten gleich automatisch fort (der PC mit der besten Hardware hostet). " +
+				"Im Tray: „" + fensterapi.FortsetzenAbbrechenLabel + "“.")
+		} else {
+			go notify("Wartung vorbei, ihr könnt wieder spielen.")
+		}
 	}
 	if needMe && err == nil {
 		if me, err := c.Me(ctx); err == nil {
@@ -335,6 +372,8 @@ func (a *App) endPlaying(ask bool) { a.endPlayingMode(ask, true) }
 // endPlayingMode ist endPlaying; handover false: als Host nie weitergeben
 // („Hosten ohne Weitergabe beenden“).
 func (a *App) endPlayingMode(ask, handover bool) {
+	// Wer ausdrücklich beendet, will nach der Wartung nichts fortsetzen.
+	a.fortVerwerfen("Spiel beendet")
 	a.mu.Lock()
 	hosting := a.hostCancel != nil
 	ph := a.phase
@@ -485,11 +524,12 @@ func (a *App) quit() {
 		}
 		a.endHosting("Beenden")
 		<-done
-	} else if busy != "" {
+	} else if busy != "" && busy != fortLabel {
 		if !confirm("Gerade läuft „"+busy+"“. Trotzdem beenden?", "Beenden", "Weiterlaufen lassen") {
 			return
 		}
 	}
+	a.fortVerwerfen("Beenden")
 	a.quitNow()
 }
 
@@ -565,4 +605,21 @@ func (a *App) sessionEnded(ending bool) {
 		a.ending = false
 		a.mu.Unlock()
 	}()
+}
+
+// versionText ist der Text „wanderwelt 0.1.6“ für das Tray-Menü; leer, wenn
+// die Version unbekannt ist.
+func (a *App) versionText() string {
+	if a.version == "" {
+		return ""
+	}
+	return "wanderwelt " + a.version
+}
+
+// trayVersion hängt die Version an den Namen im Tooltip („ 0.1.6“).
+func (a *App) trayVersion() string {
+	if a.version == "" {
+		return ""
+	}
+	return " " + a.version
 }

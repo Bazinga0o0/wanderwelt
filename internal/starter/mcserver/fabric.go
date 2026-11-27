@@ -133,6 +133,17 @@ func (f *fabric) Prepare(ctx context.Context, in PrepareInput) error {
 	// Konfigdateien: Fehler hier halten den Serverstart nicht auf.
 	applyConfigs(cfg.dir, in.Paths.Configs)
 
+	// Chat-Einstellung der Welt in die Konfig-Datei der Chatverlauf-Mod; nach
+	// den Konfigdateien aus dem Manifest, damit die Gruppeneinstellung gilt.
+	// Scheitert das Schreiben bei „aus“, startet der Server nicht (sonst
+	// würde der Chat entgegen der Einstellung gespeichert).
+	if err := applyChatConfig(cfg.dir, in.Settings.Chat); err != nil {
+		if in.Settings.Chat.Off {
+			return fmt.Errorf("mcserver: Chat-Einstellung: %w", err)
+		}
+		log.Printf("mcserver: Chat-Einstellung nicht eingetragen, der Server startet trotzdem: %v", err)
+	}
+
 	// server.properties schon jetzt, damit der Ordner vollständig ist; Start
 	// schreibt sie mit neuem RCON-Passwort noch einmal.
 	pw, err := randomPassword()

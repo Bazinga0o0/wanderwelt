@@ -27,6 +27,7 @@ type startAnsicht struct {
 	codeKopieren                            widget.Clickable
 	codeKopiertBis                          time.Time
 	wartet                                  bool
+	fortAbbrechen                           widget.Clickable
 	fehler                                  string
 	welten                                  weltAuswahl
 }
@@ -95,6 +96,15 @@ func (v *startAnsicht) layout(gtx layout.Context, u *oberflaeche, s schnappschus
 				})
 			}})
 	}
+	if v.fortAbbrechen.Clicked(gtx) && !v.wartet {
+		v.wartet, v.fehler = true, ""
+		u.d.aktion("fortsetzenabbrechen", nil, func(err error) {
+			v.wartet = false
+			if err != nil {
+				v.fehler = err.Error()
+			}
+		})
+	}
 	addr := adresse(z)
 	if v.kopieren.Clicked(gtx) && addr != "" {
 		gtx.Execute(clipboard.WriteCmd{Type: "application/text", Data: io.NopCloser(strings.NewReader(addr))})
@@ -114,6 +124,22 @@ func (v *startAnsicht) layout(gtx layout.Context, u *oberflaeche, s schnappschus
 		teile = append(teile, func(gtx layout.Context) layout.Dimensions {
 			titel, txt := fensterapi.WartungText(wm, jetzt)
 			return t.meldung(gtx, meldungWarn, titel, txt)
+		})
+	}
+	if fz := z.Fortsetzen; fz != nil {
+		// Hosten nach der Wartung wird automatisch fortgesetzt; der Knopf lehnt es
+		// ab (Texte als Textknoten, ohne Zugangsdaten).
+		teile = append(teile, func(gtx layout.Context) layout.Dimensions {
+			titel, txt := fensterapi.FortsetzenText(fz, jetzt)
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return t.meldung(gtx, meldungInfo, titel, txt)
+				}),
+				layout.Rigid(layout.Spacer{Height: 8}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return t.knopf(gtx, &v.fortAbbrechen, fensterapi.FortsetzenAbbrechenLabel, knopfNeben, !v.wartet)
+				}),
+			)
 		})
 	}
 	if rp := restore(z); rp != nil {
@@ -266,7 +292,7 @@ func (v *startAnsicht) hostKarte(gtx layout.Context, u *oberflaeche, z *fenstera
 			label, _ := fensterapi.BeendenText(z.Hosting)
 			return t.grosserKnopf(gtx, &v.beenden, label, knopfNeben, !v.wartet)
 		}
-		frei := !v.wartet && (z.Busy == "" || z.Hosting)
+		frei := !v.wartet && (z.Busy == "" || z.Hosting || z.Busy == fensterapi.FortsetzenBusy)
 		return t.grosserKnopf(gtx, &v.spielen, "Spielen", knopfHaupt, frei)
 	}
 

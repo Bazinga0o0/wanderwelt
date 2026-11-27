@@ -23,7 +23,9 @@ const wartungUsage = `  wanderwelt-koordinator wartung start [--in 60s] [--grund
       sauber (0 = sofort); danach wartet der Befehl bis zu --frist, bis kein Zuschlag und kein Upload
       mehr besteht, und meldet „bereit für das Update“ (Ausgang 3, wenn jemand hängt)
   wanderwelt-koordinator wartung ende [--config PATH]
-      beendet die Wartung: Spielen ist wieder möglich, das Aufräumen löscht wieder
+      beendet die Wartung: Spielen ist wieder möglich, das Aufräumen löscht wieder;
+      wer bei der Wartung hostete oder mitspielte, setzt in den nächsten 10 min
+      automatisch fort (der beste PC hostet)
   wanderwelt-koordinator wartung status [--config PATH]
       zeigt Zustand und Bericht der Wartung
 `
@@ -197,7 +199,8 @@ func wartungEnde(args []string, env wartungEnv, stdout, stderr io.Writer) int {
 	}
 	wartung.BerichtLoeschen(dir)
 	fmt.Fprintf(stdout, "Wartung beendet (dauerte seit %s). Der Koordinator übernimmt das im nächsten Takt: "+
-		"Spielen ist wieder möglich, das Aufräumen löscht wieder.\n", uhr(z.Since))
+		"Spielen ist wieder möglich, das Aufräumen löscht wieder. Starter, die bei der Wartung hosteten oder mitspielten, "+
+		"setzen in den nächsten 10 Minuten automatisch fort (der beste PC hostet).\n", uhr(z.Since))
 	return 0
 }
 

@@ -3,6 +3,7 @@ package fenster
 import (
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -33,7 +34,24 @@ const (
 	maxWeltNameFenster     = 40 // wie der Koordinator
 	weltNameKuerzenAuswahl = 24
 	standardBezeichnung    = "Gruppenstandard"
+
+	// Chat-Verlauf je Welt (Server-Mod chatverlauf): Werte des Schalters.
+	chatAn      = "an"
+	chatAusWert = "aus"
+	chatHinweis = "Datenschutz: Bei „an“ liegt der Chat dieser Welt dauerhaft (auf die Größengrenze gekürzt) in der Welt " +
+		"und damit bis zu 30 Tage in den Ständen auf dem Koordinator. Alle Mitglieder sollten das wissen. " +
+		"Bei „aus“ wird nichts mehr gespeichert oder gezeigt; schon gespeicherter Chat wird nicht gelöscht. " +
+		"Gilt ab dem nächsten Start der Welt."
 )
+
+var chatWerte = []string{chatAn, chatAusWert}
+
+func chatText(w string) string {
+	if w == chatAusWert {
+		return "Aus"
+	}
+	return "An"
+}
 
 var (
 	spielmodiNamen       = map[string]string{"survival": "Überleben", "creative": "Kreativ", "adventure": "Abenteuer"}
@@ -57,8 +75,9 @@ func schwierigkeitText(s string) string {
 	return standardBezeichnung
 }
 
-// weltEigenschaften beschreibt Spielmodus und Schwierigkeit einer Welt in
-// einem Satzstück ("" wenn beides Gruppenstandard ist).
+// weltEigenschaften beschreibt Spielmodus, Schwierigkeit und – wenn vom
+// Standard abweichend – den Chat-Verlauf einer Welt in einem Satzstück (""
+// wenn alles Standard ist).
 func weltEigenschaften(w api.GroupWorld) string {
 	var teile []string
 	if w.Gamemode != "" {
@@ -67,7 +86,23 @@ func weltEigenschaften(w api.GroupWorld) string {
 	if w.Difficulty != "" {
 		teile = append(teile, "Schwierigkeit "+schwierigkeitText(w.Difficulty))
 	}
+	switch {
+	case w.ChatOff:
+		teile = append(teile, "Chat-Verlauf aus")
+	case api.ChatMiBOrDefault(w.ChatMiB) != api.ChatMiBStandard:
+		teile = append(teile, fmt.Sprintf("Chat-Verlauf bis %d MiB", w.ChatMiB))
+	}
 	return strings.Join(teile, " · ")
+}
+
+// chatMiBLesen liest die Größengrenze aus dem Eingabefeld (ganze Zahl von
+// api.ChatMiBMin bis api.ChatMiBMax).
+func chatMiBLesen(s string) (int, bool) {
+	n, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil || n < api.ChatMiBMin || n > api.ChatMiBMax {
+		return 0, false
+	}
+	return n, true
 }
 
 // weltenListe liefert die Welten der Gruppe aus dem Zustand (leer ohne Liste).
@@ -197,6 +232,9 @@ type weltenVerwaltung struct {
 	modus, schwer string
 	modusKn       map[string]*widget.Clickable
 	schwerKn      map[string]*widget.Clickable
+	chatAus       bool // Chat-Verlauf der Welt aus
+	chatKn        map[string]*widget.Clickable
+	chatMiBEd     widget.Editor // Größengrenze in MiB
 	speichern     widget.Clickable
 	abbrechen     widget.Clickable
 }
@@ -205,13 +243,18 @@ func (v *weltenVerwaltung) formularOeffnen(w *api.GroupWorld) {
 	v.formular, v.fehler = true, ""
 	v.nameEd.SingleLine = true
 	v.nameEd.MaxLen = maxWeltNameFenster
+	v.chatMiBEd.SingleLine = true
+	v.chatMiBEd.MaxLen = 2
+	v.chatMiBEd.Filter = "0123456789"
 	if w == nil {
-		v.formularID, v.modus, v.schwer = "", "", ""
+		v.formularID, v.modus, v.schwer, v.chatAus = "", "", "", false
 		v.nameEd.SetText("")
+		v.chatMiBEd.SetText(strconv.Itoa(api.ChatMiBStandard))
 		return
 	}
-	v.formularID, v.modus, v.schwer = w.ID, w.Gamemode, w.Difficulty
+	v.formularID, v.modus, v.schwer, v.chatAus = w.ID, w.Gamemode, w.Difficulty, w.ChatOff
 	v.nameEd.SetText(w.Name)
+	v.chatMiBEd.SetText(strconv.Itoa(api.ChatMiBOrDefault(w.ChatMiB)))
 }
 
 // layout zeichnet die Karte „WELTEN VERWALTEN“.
@@ -250,7 +293,7 @@ func (v *weltenVerwaltung) layout(gtx layout.Context, u *oberflaeche, s schnapps
 	}
 	if !v.offen {
 		teile = append(teile,
-			layout.Rigid(t.leise("Mehrere Welten für die Gruppe: anlegen, umbenennen, Spielmodus und Schwierigkeit ändern, löschen. Es läuft immer nur eine Welt.")),
+			layout.Rigid(t.leise("Mehrere Welten für die Gruppe: anlegen, umbenennen, Spielmodus, Schwierigkeit und Chat-Verlauf ändern, löschen. Es läuft immer nur eine Welt.")),
 			layout.Rigid(layout.Spacer{Height: 10}.Layout),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return t.knopf(gtx, &v.auf, "Welten verwalten", knopfNeben, true)
@@ -378,11 +421,21 @@ func (v *weltenVerwaltung) formularAuswerten(gtx layout.Context, u *oberflaeche,
 			v.schwer = d
 		}
 	}
+	for _, k := range []string{chatAn, chatAusWert} {
+		if klick(&v.chatKn, k).Clicked(gtx) {
+			v.chatAus = k == chatAusWert
+		}
+	}
 	if v.abbrechen.Clicked(gtx) {
 		v.formular, v.fehler = false, ""
 		return
 	}
 	if !v.speichern.Clicked(gtx) || v.wartet {
+		return
+	}
+	mib, ok := chatMiBLesen(v.chatMiBEd.Text())
+	if !ok {
+		v.fehler = fmt.Sprintf("Die Größengrenze des Chat-Verlaufs muss eine ganze Zahl von %d bis %d MiB sein.", api.ChatMiBMin, api.ChatMiBMax)
 		return
 	}
 	name := strings.TrimSpace(v.nameEd.Text())
@@ -409,12 +462,27 @@ func (v *weltenVerwaltung) formularAuswerten(gtx layout.Context, u *oberflaeche,
 		}
 	}
 	if v.formularID == "" {
-		u.d.aktion(weltAuftragAnlegen, api.WorldCreate{Name: name, Gamemode: v.modus, Difficulty: v.schwer}, fertig("Welt angelegt"))
+		req := api.WorldCreate{Name: name, Gamemode: v.modus, Difficulty: v.schwer, ChatOff: v.chatAus}
+		if mib != api.ChatMiBStandard {
+			req.ChatMiB = mib
+		}
+		u.d.aktion(weltAuftragAnlegen, req, fertig("Welt angelegt"))
 		return
 	}
 	modus, schwer := v.modus, v.schwer
-	u.d.aktion(weltAuftragAendern, map[string]any{"id": v.formularID,
-		"patch": api.WorldPatch{Name: &name, Gamemode: &modus, Difficulty: &schwer}}, fertig("Welt geändert"))
+	patch := api.WorldPatch{Name: &name, Gamemode: &modus, Difficulty: &schwer}
+	// Die Chat-Felder nur senden, wenn sie sich ändern: Ein älterer
+	// Koordinator kennt sie nicht und lehnt unbekannte Felder ab.
+	if alt, ok := weltPerID(list, v.formularID); ok {
+		if alt.ChatOff != v.chatAus {
+			chatAus := v.chatAus
+			patch.ChatOff = &chatAus
+		}
+		if api.ChatMiBOrDefault(alt.ChatMiB) != mib {
+			patch.ChatMiB = &mib
+		}
+	}
+	u.d.aktion(weltAuftragAendern, map[string]any{"id": v.formularID, "patch": patch}, fertig("Welt geändert"))
 }
 
 // formularZeichnen: Name, Spielmodus, Schwierigkeit, Speichern/Abbrechen.
@@ -439,6 +507,10 @@ func (v *weltenVerwaltung) formularZeichnen(gtx layout.Context, u *oberflaeche) 
 			)
 		}
 	}
+	aktuellChat := chatAn
+	if v.chatAus {
+		aktuellChat = chatAusWert
+	}
 	titel := "Neue Welt"
 	if v.formularID != "" {
 		titel = "Welt ändern"
@@ -457,6 +529,20 @@ func (v *weltenVerwaltung) formularZeichnen(gtx layout.Context, u *oberflaeche) 
 		layout.Rigid(auswahl("Spielmodus (für neue Spieler)", spielmodiReihenfolge, modusText, v.modus, &v.modusKn)),
 		layout.Rigid(layout.Spacer{Height: 12}.Layout),
 		layout.Rigid(auswahl("Schwierigkeit", schwierigkeitenFolge, schwierigkeitText, v.schwer, &v.schwerKn)),
+		layout.Rigid(layout.Spacer{Height: 12}.Layout),
+		layout.Rigid(auswahl("Chat-Verlauf (wird neuen Spielern beim Beitritt gezeigt)", chatWerte, chatText, aktuellChat, &v.chatKn)),
+		layout.Rigid(layout.Spacer{Height: 8}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+				layout.Rigid(t.leise("Größengrenze")),
+				layout.Rigid(layout.Spacer{Width: 10}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions { return eingabe(gtx, t, &v.chatMiBEd, "5", 70) }),
+				layout.Rigid(layout.Spacer{Width: 8}.Layout),
+				layout.Rigid(t.leise(fmt.Sprintf("MiB (%d bis %d, Standard %d)", api.ChatMiBMin, api.ChatMiBMax, api.ChatMiBStandard))),
+			)
+		}),
+		layout.Rigid(layout.Spacer{Height: 6}.Layout),
+		layout.Rigid(t.leise(chatHinweis)),
 		layout.Rigid(layout.Spacer{Height: 14}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{}.Layout(gtx,

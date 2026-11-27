@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "wanderwelt-chatverlauf",
+  "version": "${version}",
+  "name": "wanderwelt Chatverlauf",
+  "description": "Speichert den Spieler-Chat im Weltordner (begrenzt, Standard 5 MiB) und zeigt beim Beitritt die letzten Nachrichten. Nur Server, keine Netzwerkzugriffe.",
+  "license": "Elastic-2.0",
+  "environment": "server",
+  "entrypoints": {
+    "main": ["de.wanderwelt.chatverlauf.ChatVerlauf"]
+  },
+  "depends": {
+    "fabricloader": ">=0.20.1",
+    "minecraft": "~26.2",
+    "java": ">=25",
+    "fabric-api": "*"
+  }
+}

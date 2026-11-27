@@ -187,6 +187,59 @@ Minecraft-Port.
   einen eigenen Ordner (`wanderwelt-Notfallkopie[-<Gruppe>]-<Welt>`, die erste
   Welt behält den bisherigen Namen).
 
+### Chat-Verlauf
+
+Mit der Server-Mod `wanderwelt-chatverlauf` (Quelle: `mods/chatverlauf`; der
+Admin trägt sie ins Manifest ein, siehe „Chat-Verlauf-Mod ins Manifest
+eintragen“) bleibt der Chat über Neustarts und Hostwechsel erhalten: Wer der
+Welt beitritt, sieht die letzten Nachrichten (Standard 50) als graue
+Verlaufszeilen mit Zeit im Tooltip am Namen. Du brauchst dafür nichts zu
+installieren.
+
+- **Was gespeichert wird:** Chat der Spieler sowie `/me` und `/say` von
+  Spielern, mit Name, Zeit und Text, im Klartext. Nicht gespeichert werden
+  `/msg`, Team-Chat, Systemmeldungen und Ansagen des Starters.
+- **Wo:** im Weltordner (`world/wanderwelt-chatverlauf/`), in Segmenten von je
+  256 KiB. Der Ordner wandert mit jedem Stand zum nächsten Host. Je Welt der
+  Gruppe gibt es einen eigenen Verlauf.
+- **Größengrenze:** höchstens 5 MiB (einstellbar, 1 bis 50 MiB). Wird sie
+  überschritten, fallen die ältesten Segmente weg. Bei normalem Freundeschat
+  (wenige KiB am Tag) wird sie lange nicht erreicht. Wie viele Zeilen beim
+  Beitritt kommen, ist zweitrangig und bleibt bei 50.
+- **Datenschutz – bitte alle Mitglieder wissen lassen:** Der Chat liegt
+  dauerhaft (auf die Größengrenze gekürzt) in der Welt und damit bis zu
+  30 Tage in den Ständen auf dem Koordinator (Aufbewahrung siehe „Aufbewahrung
+  der Stände“), lesbar für den Betreiber des Koordinators und für jeden Host,
+  der die Welt hostet. Wer das nicht will, bittet einen Admin, den Verlauf der
+  Welt auszuschalten (nächster Punkt). Schon gespeicherter Chat wird beim
+  Ausschalten **nicht** gelöscht; er bleibt in der Welt liegen und verschwindet
+  erst mit den Ständen, die ihn enthalten, oder wenn ein Admin die Dateien von
+  Hand entfernt und die Welt neu speichert.
+- **Einstellen (nur Admins):** Reiter **Welt**, Karte „Welten verwalten“,
+  bei einer Welt „Ändern“ (oder „Neue Welt“): **Chat-Verlauf** An/Aus und
+  **Größengrenze** in MiB. Die Einstellung gilt je Welt und für die ganze
+  Gruppe, ab dem nächsten Start der Welt (der Host trägt sie vor dem
+  Serverstart in `config/wanderwelt-chatverlauf.json` ein; andere Schlüssel
+  dieser Datei, etwa `wiedergabe_zeilen` oder `zeit`, bleiben unangetastet).
+  Mitglieder sehen auf dem Reiter Start in der Welt-Karte, wenn der Verlauf
+  einer Welt aus ist oder eine andere Grenze hat. Bei „Aus“ schreibt die Mod
+  nichts mehr und zeigt nichts mehr; Standard ist An mit 5 MiB.
+- **Grenzen:**
+  - Stürzt der Host ab, wird die Welt auf den letzten Stand zurückgesetzt –
+    und mit ihr der Chat seit diesem Stand (höchstens ein Stand-Abstand, in
+    der Regel 5 Minuten). Dasselbe gilt für „Stände zurückholen“: Der Chat
+    geht auf den Stand des gewählten Standes zurück.
+  - Die Wiedergabe beim Beitritt ist eine Servernachricht ohne Signatur: Sie
+    lässt sich nicht melden, trägt keine Spieler-UUID, und die Blockliste des
+    Clients greift nicht – wen du blockiert hast, siehst du im Verlauf
+    trotzdem. Bei der Chat-Einstellung „Nur Befehle“ siehst du nur die Kopf-
+    und Schlusszeile.
+  - Formatierungen anderer Chat-Mods gehen verloren (gespeichert wird nur der
+    Klartext). Chat, der bei einer Host-Übergabe nach dem Bereitstellen des
+    Standes anfällt (die Spieler warten dann als Zuschauer), geht verloren.
+  - Eine ältere Mod-Version ohne den Schlüssel `aktiv` ignoriert „Aus“: Die
+    Jar im Manifest muss mindestens 1.1.0 sein.
+
 ### Rollen
 
 - **Mitglied**: spielen und hosten.
@@ -636,7 +689,21 @@ wanderwelt-koordinator wartung ende
   WARTUNG“, was er löschen würde. Gelöscht wird erst wieder nach `wartung ende`
   – ein Update mit neuen Aufbewahrungsregeln nimmt so nie unbemerkt Stände weg.
 - `wartung ende`: Spielen ist wieder möglich, die Starter melden „Wartung
-  vorbei, ihr könnt wieder spielen.“
+  vorbei, ihr könnt wieder spielen.“ Kam die Wartung bis zum Stopp, öffnet
+  der Koordinator zusätzlich ein Fortsetzen-Fenster (siehe unten).
+- Hosten nach der Wartung fortsetzen: Starter, die bei Wartungsbeginn hosteten
+  (der Server endete wegen der Wartung) oder mitspielten, merken sich das
+  (`fortsetzen.json` im Gruppenordner). Nach `wartung ende` nennt der Status
+  60 s lang „Beginn in …“ (`resume`, Verfall nach 10 min, gespeichert in
+  `wartung-fortsetzen.json`); alle Starter mit Merker bereiten ihre Bewerbung
+  vor und bewerben sich zum Beginn gemeinsam wie bei „Spielen“. Das
+  gewöhnliche Sammelfenster wählt den besten PC (Upload 20 %, CPU 40 %, RAM 40 %; Mindestwerte:
+  Upload 30 Mbit/s, 16-GB-PC mit genug freiem RAM; Upload über 100 Mbit/s und RAM über 64 GB zählen nicht mehr); er holt den Stand und hostet wie sonst, die anderen bekommen den
+  Beitrittshinweis (ohne den Launcher von selbst zu öffnen). Es entfällt,
+  wenn schon jemand hostet, die Wartung wieder läuft, der Nutzer „Fortsetzen
+  abbrechen“ (Tray, Reiter Start), „Spielen“ oder „Nicht mehr mitspielen“
+  gewählt, den Starter beendet oder Minecraft geschlossen hat. Ältere Starter
+  setzen nicht fort (wie bisher); Koordinator zuerst aktualisieren.
 - `sicherung <ziel>` (bei gestopptem Dienst oder in der Wartung nach „bereit“):
   Blobs als Hardlink (kein zusätzlicher Platz), Metadaten und Konfiguration
   als echte Kopie, dazu `<ziel>/konfiguration/`. Das Ziel muss auf demselben
@@ -813,6 +880,17 @@ Weltkennung des Speichers (`store_world`) mit Head, die früheren Weltkennungen
   scheitert mit 409, solange die Welt läuft (Zuschlag, auch zum Hochladen,
   wartender Zuschlag, Zurückholen) und für die letzte Welt. Namen: 1–40
   Zeichen, je Gruppe eindeutig.
+- Chat-Verlauf je Welt: `chat_off` (Verlauf aus) und `chat_mib` (Größengrenze
+  in MiB, 1–50, 0 oder fehlend = Standard 5) in `POST` und `PATCH`
+  (`PATCH` mit `{"chat_off": true, "chat_mib": 10}`), ebenso in der Weltliste;
+  beide Felder fehlen im JSON, solange sie dem Standard entsprechen (an,
+  5 MiB). Ungültige Größen ergeben 400, Nicht-Admins 403. `GET
+  /v1/host/settings` liefert dem Host `chat: {"off", "mib"}` der Welt seines
+  Zuschlags. Ein Koordinator vor Version dieser Funktion lehnt die Felder im
+  `PATCH` als unbekannt ab: **erst den Koordinator, dann die Starter
+  aktualisieren**; ein älterer Starter (ohne die Felder) ändert nichts und
+  schreibt die Konfig-Datei der Mod nicht, ein neuer Starter an einem
+  älteren Koordinator lässt sie unberührt.
 - `POST /v1/play` nimmt `group_world` (ohne Angabe: erste Welt). Eine andere
   Welt als die laufende ergibt `denied` mit Grund, ebenso eine leere Welt für
   Nicht-Admins. `GET /v1/generations/head?world=<id>` liefert den Head einer
@@ -1061,6 +1139,47 @@ Beim Start und bei jedem Neuladen prüft der Koordinator alle
 `wanderwelt:`-Einträge (Datei da, Hash passt) und meldet Abweichungen im Log
 (`journalctl -u wanderwelt-koordinator`, Zeile „ARTEFAKT AUS DEM MANIFEST
 NICHT AUSLIEFERBAR“) – so ein Eintrag verhindert jedes Hosten.
+
+### Chat-Verlauf-Mod ins Manifest eintragen
+
+Die Mod `wanderwelt-chatverlauf` (Quelle `mods/chatverlauf`, Elastic License
+2.0 wie das Repo) ist eine reine Server-Mod: Spieler brauchen nichts. Es gibt
+keine stabile externe URL, die Jar liegt deshalb als `wanderwelt:`-Datei auf
+dem Koordinator. Sie ist **nicht** `optional`: Ein Host ohne sie würde den
+Chat der Welt nicht mitschreiben; fehlt sie oder passt ihr Hash nicht, startet
+der Server nicht, bis das behoben ist.
+
+1. Bauen (JDK 25, im Ordner `mods/chatverlauf`):
+   `./gradlew build` (Windows: `gradlew.bat build`) ergibt
+   `build/libs/wanderwelt-chatverlauf-26.2-<version>.jar`. Der Gradle-Wrapper
+   lädt Gradle und Loom selbst; `build/` und `.gradle/` gehören nie ins
+   Repo.
+2. Ablegen und Hash bilden wie oben (unter neuem Dateinamen je Version):
+
+   ```
+   install -o wanderwelt -g wanderwelt -m 0640 wanderwelt-chatverlauf-26.2-1.1.0.jar /var/lib/wanderwelt/artifacts/
+   echo "sha512:$(sha512sum /var/lib/wanderwelt/artifacts/wanderwelt-chatverlauf-26.2-1.1.0.jar | cut -d' ' -f1)"
+   ```
+3. Eintrag unter `mods:` (Vorlage in `deploy/manifest.example.yaml`), dann
+   `systemctl reload wanderwelt-koordinator`:
+
+   ```yaml
+   mods:
+     - name: wanderwelt-chatverlauf
+       url: "wanderwelt:wanderwelt-chatverlauf-26.2-1.1.0.jar"
+       hash: "sha512:HASH-DER-ABGELEGTEN-DATEI"
+   ```
+
+Fabric API ist Voraussetzung und steht schon im Manifest. Die Jar gilt für
+genau eine Minecraft-Version (`"minecraft": "~26.2"`); beim Versionswechsel
+wird sie zusammen mit den anderen Mods ersetzt. Ab Version 1.1.0 kennt die
+Mod den Schalter „Verlauf aus“; der Chat-Verlauf lässt sich dann je Welt im
+Fenster einstellen (siehe „Chat-Verlauf“). Die Standardwerte (5 MiB, 50
+Zeilen, Zeit im Tooltip) gelten ohne weitere Konfig-Datei; wer abweichende
+Werte für alle Hosts will, verteilt `config/wanderwelt-chatverlauf.json` über
+`configs` (nicht als `enforce` mit `aktiv` oder `max_bytes`, denn die
+Gruppeneinstellung schreibt diese beiden Schlüssel bei jedem Start danach
+ohnehin neu; `wiedergabe_zeilen`, `zeit` und `segment_bytes` bleiben).
 
 ### Konfigdateien im Manifest (`configs`)
 

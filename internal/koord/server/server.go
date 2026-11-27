@@ -168,6 +168,10 @@ type Server struct {
 	// beim Lesen (unter phMu).
 	wartung    atomic.Pointer[wartung.Zustand]
 	wartungErr string
+	// resume ist das Fortsetzen-Fenster nach einer Wartung (wartung.go): nil
+	// ohne. Ersetzt nur unter phMu (oder im Aufbau); Status und Spielen
+	// lesen es ohne Sperre.
+	resume atomic.Pointer[wartung.Fortsetzen]
 
 	// Host-Übergabe (handover.go). ho, repl, hoDirty und hoSeq ändern sich
 	// nur unter phMu; ho und repl lesen Lebenszeichen und Status ohne
@@ -272,6 +276,7 @@ func New(cfg *config.Config, lm *lease.Manager, st *store.Store, ph portholder.C
 	})
 	// Eine laufende Wartung gilt gleich nach dem Start (sie steht in data_dir).
 	s.readWartungLocked()
+	s.loadResumeLocked()
 	return s
 }
 
@@ -505,6 +510,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		RestorePending:    s.restoreNotice(),
 		Handover:          s.handoverState(s.ho.Load(), false),
 		Maintenance:       s.wartungNotice(),
+		Resume:            s.resumeNotice(),
 	}
 	st.Members = len(s.memberList())
 	st.NoDiscordJoin = s.cfg.NoDiscordJoin
@@ -671,6 +677,12 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 	// Grund steht im Hinweis des Starters (wartung.go).
 	if reason := s.wartungReason(); reason != "" {
 		s.writePlay(w, lease.Grant{Role: api.RoleDenied}, reason, world)
+		return
+	}
+	// Das automatische Fortsetzen nach der Wartung gibt es nur im offenen
+	// Fenster (wartung.go); ein gewöhnliches „Spielen“ ist nie betroffen.
+	if req.Resume && !s.resumeOpen() {
+		s.writePlay(w, lease.Grant{Role: api.RoleDenied}, api.ReasonResumeClosed, world)
 		return
 	}
 	// Während ein Zurückholen aussteht, startet niemand und spielt niemand
@@ -1062,6 +1074,8 @@ func (s *Server) handleHostSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	// Eigenschaften der Welt (Spielmodus, Schwierigkeit) gehen vor
 	// world_settings; ungesetzte lassen den Gruppenstandard stehen.
+	// Der Chat-Verlauf der Welt kommt immer mit (ohne Eintrag: an, Standardgröße).
+	hs.Chat = &api.ChatSettings{MiB: api.ChatMiBStandard}
 	if e, ok := s.st.GroupWorld(s.normWorld(info.World)); ok {
 		if e.Gamemode != "" {
 			hs.Properties["gamemode"] = e.Gamemode
@@ -1069,6 +1083,7 @@ func (s *Server) handleHostSettings(w http.ResponseWriter, r *http.Request) {
 		if e.Difficulty != "" {
 			hs.Properties["difficulty"] = e.Difficulty
 		}
+		hs.Chat = &api.ChatSettings{Off: e.ChatOff, MiB: api.ChatMiBOrDefault(e.ChatMiB)}
 	}
 	// Abstand der Zwischenstände (snapshot_interval). 0 (Konfiguration nicht
 	// über Load gelesen) fehlt in der Antwort; der Host nimmt dann 5 min.

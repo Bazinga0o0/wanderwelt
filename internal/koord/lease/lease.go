@@ -686,14 +686,24 @@ func joinGrant(h *hostState) Grant {
 
 // Best liefert den Index des besten Kandidaten, -1 bei leerer Liste.
 //
-// Es zählen nur Kandidaten mit freiem RAM ≥ Xmx + 1024 MB und Upload
-// ≥ 5 Mbit/s; erfüllt das niemand, zählen alle. Jede Größe wird durch ihr
-// Maximum unter den zählenden Kandidaten geteilt; Score = 0,5·Upload +
-// 0,35·CPU + 0,15·freier RAM. Bei Gleichstand gewinnt der frühere Index.
+// Es zählen nur Kandidaten mit gemessenem Upload ≥ MinUploadMbps (30 Mbit/s),
+// mindestens MinRAMTotalMB (14 GiB) gesamtem RAM (ein „16-GB-PC“; ist der Gesamt-RAM
+// unbekannt, zählt der freie) und freiem RAM ≥ Xmx + 1024 MB; erfüllt das
+// niemand, zählen alle. Score = 0,2·Upload + 0,4·CPU + 0,4·freier RAM:
+//   - Upload zählt absolut bis MaxUploadMbps (100 Mbit/s), mehr bringt nichts,
+//   - freier RAM zählt absolut bis MaxRAMMB (64 GB), mehr bringt nichts,
+//   - CPU wird durch das Maximum unter den zählenden Kandidaten geteilt.
+//
+// Bei Gleichstand gewinnt der frühere Index.
 func Best(cands []Candidate) int {
 	var pool []int
 	for i, c := range cands {
-		if c.Score.RAMFreeMB >= c.Score.XmxMB+1024 && c.Score.UploadMbps >= 5 {
+		s := c.Score
+		ram := s.RAMTotalMB
+		if ram <= 0 {
+			ram = s.RAMFreeMB
+		}
+		if s.UploadMbps >= MinUploadMbps && ram >= MinRAMTotalMB && s.RAMFreeMB >= s.XmxMB+1024 {
 			pool = append(pool, i)
 		}
 	}
@@ -702,23 +712,33 @@ func Best(cands []Candidate) int {
 			pool = append(pool, i)
 		}
 	}
-	var maxUp, maxCPU, maxRAM float64
+	var maxCPU float64
 	for _, i := range pool {
-		s := cands[i].Score
-		maxUp = max(maxUp, s.UploadMbps)
-		maxCPU = max(maxCPU, s.CPUScore)
-		maxRAM = max(maxRAM, float64(s.RAMFreeMB))
+		maxCPU = max(maxCPU, cands[i].Score.CPUScore)
 	}
 	best, bestScore := -1, 0.0
 	for _, i := range pool {
 		s := cands[i].Score
-		score := 0.5*norm(s.UploadMbps, maxUp) + 0.35*norm(s.CPUScore, maxCPU) + 0.15*norm(float64(s.RAMFreeMB), maxRAM)
+		score := 0.2*norm(min(s.UploadMbps, MaxUploadMbps), MaxUploadMbps) +
+			0.4*norm(s.CPUScore, maxCPU) +
+			0.4*norm(float64(min(s.RAMFreeMB, MaxRAMMB)), MaxRAMMB)
 		if best < 0 || score > bestScore {
 			best, bestScore = i, score
 		}
 	}
 	return best
 }
+
+// Grenzen der Host-Wahl (siehe Best).
+const (
+	MinUploadMbps = 30.0
+	MaxUploadMbps = 100.0
+	// MinRAMTotalMB: 14 GiB statt 16, weil ein „16-GB-PC“ unter Windows nach
+	// Abzug des reservierten Speichers (bei iGPU mit zugeteiltem Grafikspeicher
+	// auch weniger) meist 14–15,9 GiB meldet.
+	MinRAMTotalMB = 14 * 1024
+	MaxRAMMB      = 64 * 1024
+)
 
 func norm(v, maxV float64) float64 {
 	if maxV <= 0 {

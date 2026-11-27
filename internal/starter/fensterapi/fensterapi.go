@@ -94,6 +94,8 @@ type Zustand struct {
 	// (wanderwelt://beitreten bei mehreren Gruppen); gilt einige Sekunden.
 	ZeigeEntdecken bool
 	Hinweise       []Hinweis // die letzten 20, Seq aufsteigend
+	// Fortsetzen: Merker „Hosten nach der Wartung fortsetzen“; nil ohne.
+	Fortsetzen *Fortsetzen `json:",omitempty"`
 }
 
 // WeltZustand ist die Weltauswahl der aktiven Gruppe. Die Liste der Welten
@@ -529,4 +531,55 @@ func (c *Client) Entdecken(ctx context.Context, neu bool) (*Entdecken, error) {
 		return nil, err
 	}
 	return &e, nil
+}
+
+// Fortsetzen ist der Stand des automatischen Fortsetzens nach einer Wartung
+// (Merker dieses PCs). Rolle: RolleHost oder RolleMitspieler; Laeuft: die
+// Bewerbung läuft gerade; Ab und Bis: Beginn und Verfall des Fensters nach
+// der Uhr dieses PCs (Null: das Fenster ist noch nicht bekannt, die Wartung
+// läuft).
+type Fortsetzen struct {
+	Rolle  string
+	Laeuft bool
+	Ab     time.Time
+	Bis    time.Time
+}
+
+// Rollen des Merkers (Fortsetzen.Rolle).
+const (
+	RolleHost       = "host"
+	RolleMitspieler = "mitspieler"
+)
+
+// Texte des Fortsetzens im Tray.
+const (
+	// WartungTrayFortsetzen: Tooltip-Zeile während der Wartung mit Merker.
+	WartungTrayFortsetzen = "Wartung am Server – danach wird das Hosten automatisch fortgesetzt"
+	// FortsetzenTray: Tooltip-Zeile nach der Wartung, solange der Merker gilt.
+	FortsetzenTray = "Hosten wird nach der Wartung automatisch fortgesetzt …"
+	// FortsetzenAbbrechenLabel: Menüpunkt und Knopf.
+	FortsetzenAbbrechenLabel = "Fortsetzen abbrechen"
+	// FortsetzenBusy ist Zustand.Busy während der Bewerbung; „Spielen“ bleibt
+	// dann klickbar (ein Klick ersetzt sie).
+	FortsetzenBusy = "Fortsetzen nach der Wartung"
+)
+
+// FortsetzenText beschreibt den Merker für das Fenster: Titel und Text.
+// jetzt ist die Zeit für „spätestens bis …“.
+func FortsetzenText(f *Fortsetzen, jetzt time.Time) (titel, text string) {
+	titel = "Hosten wird nach der Wartung fortgesetzt"
+	wer := "Du hast bei Beginn der Wartung mitgespielt."
+	if f != nil && f.Rolle == RolleHost {
+		wer = "Du hast bei Beginn der Wartung gehostet."
+	}
+	switch {
+	case f == nil:
+		return titel, wer
+	case f.Laeuft:
+		return titel, wer + " wanderwelt bewirbt sich jetzt gemeinsam mit den anderen; der PC mit der besten Hardware hostet."
+	case f.Bis.IsZero():
+		return titel, wer + " Wenn die Wartung vorbei ist, bewerben sich alle gemeinsam; der PC mit der besten Hardware hostet, die anderen bekommen den Beitrittshinweis."
+	}
+	return titel, wer + " Alle bewerben sich gemeinsam; der PC mit der besten Hardware hostet, die anderen bekommen den Beitrittshinweis. " +
+		"Spätestens bis " + f.Bis.Local().Format("15:04") + "."
 }

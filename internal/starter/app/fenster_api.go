@@ -67,15 +67,16 @@ const (
 	aktionSpeicher      = "speicher"
 	aktionRolle         = "rolle"
 	aktionLogordner     = "logordner"
-	aktionNotfall       = "notfallkopie"  // Haken „Notfallkopie behalten“
-	aktionNotfallOrdner = "notfallordner" // Ordner der Notfallkopie öffnen
-	aktionMcName        = "mcname"        // Admin: Minecraft-Namen eines Mitglieds ändern
-	aktionBeitritt      = "beitritt"      // Admin: Beitrittsanfrage annehmen oder ablehnen
-	aktionGruppe        = "gruppe"        // aktive Gruppe wechseln
-	aktionWelt          = "welt"          // Welt für „Spielen“ wählen
-	aktionWeltNeu       = "weltneu"       // Admin: Welt anlegen
-	aktionWeltAendern   = "weltaendern"   // Admin: Welt umbenennen / Eigenschaften ändern
-	aktionWeltLoeschen  = "weltloeschen"  // Admin: Welt löschen (mit Bestätigung)
+	aktionNotfall       = "notfallkopie"        // Haken „Notfallkopie behalten“
+	aktionNotfallOrdner = "notfallordner"       // Ordner der Notfallkopie öffnen
+	aktionMcName        = "mcname"              // Admin: Minecraft-Namen eines Mitglieds ändern
+	aktionBeitritt      = "beitritt"            // Admin: Beitrittsanfrage annehmen oder ablehnen
+	aktionGruppe        = "gruppe"              // aktive Gruppe wechseln
+	aktionWelt          = "welt"                // Welt für „Spielen“ wählen
+	aktionWeltNeu       = "weltneu"             // Admin: Welt anlegen
+	aktionWeltAendern   = "weltaendern"         // Admin: Welt umbenennen / Eigenschaften ändern
+	aktionWeltLoeschen  = "weltloeschen"        // Admin: Welt löschen (mit Bestätigung)
+	aktionFortsetzen    = "fortsetzenabbrechen" // Hosten nach der Wartung nicht fortsetzen
 )
 
 // setAutostart trägt die installierte Kopie in den Autostart ein bzw.
@@ -157,7 +158,7 @@ func (a *App) aktion(w http.ResponseWriter, r *http.Request, name string, body [
 	switch name {
 	case aktionBeenden, aktionBeendenOhne, aktionImport, aktionProfil, aktionAutostart, aktionZurueckholen,
 		aktionSpeicher, aktionRolle, aktionLogordner, aktionMcName, aktionBeitritt, aktionNotfall, aktionNotfallOrdner, aktionGruppe, aktionEntdeckenBeitritt,
-		aktionWelt, aktionWeltNeu, aktionWeltAendern, aktionWeltLoeschen:
+		aktionWelt, aktionWeltNeu, aktionWeltAendern, aktionWeltLoeschen, aktionFortsetzen:
 		log.Printf("Fenster: %s", name)
 	default:
 		http.Error(w, "unbekannte Aktion", http.StatusNotFound)
@@ -174,6 +175,9 @@ func (a *App) aktion(w http.ResponseWriter, r *http.Request, name string, body [
 		}
 		go a.endPlaying(false) // gefragt hat das Fenster
 		w.WriteHeader(http.StatusAccepted)
+	case aktionFortsetzen:
+		a.fortAbbrechen()
+		w.WriteHeader(http.StatusOK)
 	case aktionBeendenOhne:
 		if !a.isHosting() {
 			antwortFehler(w, http.StatusConflict, "Du hostest gerade nicht.")
@@ -403,6 +407,7 @@ func (a *App) zustand() fensterapi.Zustand {
 	z.Autostart = autostartOn()
 	z.Notfallkopie = a.notfallZustand()
 	z.Hinweise = a.hinweise.abfrage(fensterNow())
+	z.Fortsetzen = a.fortZustand()
 	return z
 }
 

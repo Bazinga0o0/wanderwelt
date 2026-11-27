@@ -191,37 +191,76 @@ func TestConcurrentRequestsYieldOneHost(t *testing.T) {
 	}
 }
 
-func TestBestPrefersUploadWeighted(t *testing.T) {
-	a := Candidate{Email: "a@x.de", Score: api.Score{UploadMbps: 100, CPUScore: 1000, RAMFreeMB: 16000}}
-	b := Candidate{Email: "b@x.de", Score: api.Score{UploadMbps: 20, CPUScore: 1500, RAMFreeMB: 32000}}
-	if got := Best([]Candidate{a, b}); got != 0 {
-		t.Fatalf("Best(A, B) = %d, erwartet 0 (A)", got)
+// cand baut einen Kandidaten mit Gesamt-RAM 128 GB und Xmx 4 GB.
+func cand(email string, up, cpu float64, freeMB int) Candidate {
+	return Candidate{Email: email, Score: api.Score{UploadMbps: up, CPUScore: cpu, RAMFreeMB: freeMB, RAMTotalMB: 131072, XmxMB: 4096}}
+}
+
+func TestBestWeights20_40_40(t *testing.T) {
+	// Gleich bis auf Upload (100 gegen 30): der höhere Upload gewinnt (20 %).
+	if got := Best([]Candidate{cand("b", 30, 1000, 20000), cand("a", 100, 1000, 20000)}); got != 1 {
+		t.Fatalf("Upload 100 gegen 30 = %d, erwartet 1", got)
 	}
-	if got := Best([]Candidate{b, a}); got != 1 {
-		t.Fatalf("Best(B, A) = %d, erwartet 1 (A)", got)
+	// CPU zählt 40 %: A (CPU 1000, RAM 16 GB) schlägt B (CPU 500, RAM 20 GB):
+	// 0,2+0,4+0,4·0,25 = 0,70 gegen 0,2+0,2+0,4·0,3125 = 0,525.
+	if got := Best([]Candidate{cand("b", 100, 500, 20480), cand("a", 100, 1000, 16384)}); got != 1 {
+		t.Fatalf("CPU-Gewicht = %d, erwartet 1", got)
 	}
-	// Knapper Fall, den nur das Verhältnis 0,5 zu 0,35 entscheidet:
-	// A = 0,5 + 0,35·2/3 ≈ 0,733 gegen B = 0,5·0,7 + 0,35 = 0,700 (RAM gleich).
-	a2 := Candidate{Email: "a@x.de", Score: api.Score{UploadMbps: 100, CPUScore: 1000, RAMFreeMB: 16000}}
-	b2 := Candidate{Email: "b@x.de", Score: api.Score{UploadMbps: 70, CPUScore: 1500, RAMFreeMB: 16000}}
-	if got := Best([]Candidate{b2, a2}); got != 1 {
-		t.Fatalf("Best(B2, A2) = %d, erwartet 1 (A2)", got)
+	// RAM zählt 40 %: A (CPU 900, RAM 60 GB) schlägt B (CPU 1000, RAM 20 GB):
+	// 0,2+0,36+0,4·0,9375 = 0,935 gegen 0,2+0,4+0,4·0,3125 = 0,725.
+	if got := Best([]Candidate{cand("b", 100, 1000, 20480), cand("a", 100, 900, 61440)}); got != 1 {
+		t.Fatalf("RAM-Gewicht = %d, erwartet 1", got)
 	}
 }
 
-func TestBestSkipsBelowMinimumUnlessNoneQualify(t *testing.T) {
-	a := Candidate{Email: "a@x.de", Score: api.Score{UploadMbps: 3, CPUScore: 5000, RAMFreeMB: 32000, XmxMB: 6000}}
-	b := Candidate{Email: "b@x.de", Score: api.Score{UploadMbps: 10, CPUScore: 1000, RAMFreeMB: 8000, XmxMB: 6000}}
-	if got := Best([]Candidate{a, b}); got != 1 {
-		t.Fatalf("Best(A Up=3, B Up=10) = %d, erwartet 1 (B)", got)
+func TestBestCapsUploadAt100AndRAMAt64GB(t *testing.T) {
+	// Upload über 100 Mbit/s bringt nichts: Gleichstand, der frühere Index gewinnt.
+	if got := Best([]Candidate{cand("a", 100, 1000, 20000), cand("b", 400, 1000, 20000)}); got != 0 {
+		t.Fatalf("Upload 100 gegen 400 = %d, erwartet 0 (Gleichstand)", got)
 	}
-	// Zu wenig freier RAM (unter Xmx + 1 GB) zählt ebenso als unter dem Minimum.
-	c := Candidate{Email: "c@x.de", Score: api.Score{UploadMbps: 500, CPUScore: 5000, RAMFreeMB: 7000, XmxMB: 6000}}
-	if got := Best([]Candidate{c, b}); got != 1 {
-		t.Fatalf("Best(C RAM knapp, B) = %d, erwartet 1 (B)", got)
+	// Freier RAM über 64 GB bringt nichts.
+	if got := Best([]Candidate{cand("a", 100, 1000, 65536), cand("b", 100, 1000, 120000)}); got != 0 {
+		t.Fatalf("RAM 64 GB gegen 120 GB = %d, erwartet 0 (Gleichstand)", got)
+	}
+}
+
+func TestBestMinimums30Mbit16GBAndFreeRAM(t *testing.T) {
+	good := cand("good", 30, 1000, 20000)
+	if got := Best([]Candidate{cand("slow", 29.9, 5000, 60000), good}); got != 1 {
+		t.Fatalf("Upload 29,9 darf nicht zählen: %d, erwartet 1", got)
+	}
+	small := cand("small", 100, 5000, 20000)
+	small.Score.RAMTotalMB = 8192 // 8-GB-PC
+	if got := Best([]Candidate{small, good}); got != 1 {
+		t.Fatalf("8-GB-PC darf nicht zählen: %d, erwartet 1", got)
+	}
+	sixteen := cand("sixteen", 100, 5000, 20000)
+	sixteen.Score.RAMTotalMB = 14500 // ein „16-GB-PC“ mit iGPU-Grafikspeicher
+	if got := Best([]Candidate{good, sixteen}); got != 1 {
+		t.Fatalf("16-GB-PC muss zählen: %d, erwartet 1", got)
+	}
+	// Zu wenig freier RAM (unter Xmx + 1 GB) zählt nicht.
+	tight := cand("tight", 100, 5000, 5000)
+	if got := Best([]Candidate{tight, good}); got != 1 {
+		t.Fatalf("zu wenig freier RAM darf nicht zählen: %d, erwartet 1", got)
+	}
+	// Unbekannter Gesamt-RAM (0): der freie RAM entscheidet.
+	unknown := cand("unknown", 100, 5000, 20000)
+	unknown.Score.RAMTotalMB = 0
+	if got := Best([]Candidate{good, unknown}); got != 1 {
+		t.Fatalf("Gesamt-RAM unbekannt, frei 20 GB muss zählen: %d, erwartet 1", got)
+	}
+	// Erfüllt niemand die Mindestwerte, zählen alle (der Beste unter ihnen).
+	a := cand("a", 10, 1000, 20000)
+	b := cand("b", 20, 1000, 20000)
+	if got := Best([]Candidate{a, b}); got != 1 {
+		t.Fatalf("niemand erfüllt die Mindestwerte = %d, erwartet 1 (b)", got)
 	}
 	if got := Best([]Candidate{a}); got != 0 {
-		t.Fatalf("Best(nur A) = %d, erwartet 0", got)
+		t.Fatalf("Best(nur a) = %d, erwartet 0", got)
+	}
+	if got := Best(nil); got != -1 {
+		t.Fatalf("Best(nil) = %d, erwartet -1", got)
 	}
 }
 

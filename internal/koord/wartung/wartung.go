@@ -225,3 +225,87 @@ func schreiben(path string, v any) error {
 	}
 	return err
 }
+
+// ---- Fortsetzen nach der Wartung ----
+
+const (
+	// FortsetzenName ist das Fortsetzen-Fenster in data_dir (der
+	// Koordinator ist der einzige Schreiber).
+	FortsetzenName = "wartung-fortsetzen.json"
+	// FortsetzenVorlauf: So lange nach dem Ende der Wartung beginnt das
+	// Fenster. Größer als der Statustakt der Starter (30 s), damit jeder
+	// Starter es vorher sieht und seine Bewerbung vorbereiten kann.
+	FortsetzenVorlauf = 60 * time.Second
+	// FortsetzenDauer: So lange nach dem Ende der Wartung verfällt das
+	// Fenster.
+	FortsetzenDauer = 10 * time.Minute
+)
+
+// Fortsetzen ist das Fenster, in dem Starter, die bei Wartungsbeginn hosteten
+// oder mitspielten, ihr Hosten fortsetzen dürfen. Since: die Wartung, auf die
+// es sich bezieht (Zustand.Since); Opens: wann sich alle gemeinsam bewerben;
+// Until: danach verfällt es.
+type Fortsetzen struct {
+	Since time.Time `json:"since"`
+	Opens time.Time `json:"opens"`
+	Until time.Time `json:"until"`
+}
+
+// NeuesFortsetzen öffnet das Fenster für die gerade zur Zeit now beendete
+// Wartung z. Es gibt nur, wenn die Wartung bis zur Phase Gestoppt kam (sonst
+// hat niemand gestoppt und niemand einen Merker).
+func NeuesFortsetzen(z Zustand, now time.Time) (Fortsetzen, bool) {
+	if !z.Aktiv || z.Phase(now) != Gestoppt {
+		return Fortsetzen{}, false
+	}
+	return Fortsetzen{
+		Since: z.Since,
+		Opens: now.Add(FortsetzenVorlauf).UTC(),
+		Until: now.Add(FortsetzenDauer).UTC(),
+	}, true
+}
+
+// Offen: Das Fenster ist noch nicht verfallen (auch vor Opens, wenn die
+// Bewerbungen noch ausstehen).
+func (f Fortsetzen) Offen(now time.Time) bool {
+	return !f.Until.IsZero() && now.Before(f.Until)
+}
+
+// OpensIn und UntilIn sind die Restzeiten nach now (nie negativ), auf ganze
+// Sekunden aufgerundet.
+func (f Fortsetzen) OpensIn(now time.Time) time.Duration { return rest(f.Opens, now) }
+func (f Fortsetzen) UntilIn(now time.Time) time.Duration { return rest(f.Until, now) }
+
+func rest(t, now time.Time) time.Duration {
+	d := t.Sub(now)
+	if d <= 0 {
+		return 0
+	}
+	return (d + time.Second - 1) / time.Second * time.Second
+}
+
+// FortsetzenPfad liefert den Pfad des Fensters in dataDir.
+func FortsetzenPfad(dataDir string) string { return filepath.Join(dataDir, FortsetzenName) }
+
+// FortsetzenLaden liest das Fenster; ohne Datei ist ok false. Eine kaputte
+// Datei ist ein Fehler.
+func FortsetzenLaden(dataDir string) (f Fortsetzen, ok bool, err error) {
+	err = lesen(FortsetzenPfad(dataDir), &f)
+	if errors.Is(err, fs.ErrNotExist) {
+		return Fortsetzen{}, false, nil
+	}
+	if err != nil {
+		return Fortsetzen{}, false, fmt.Errorf("%s: %w", FortsetzenName, err)
+	}
+	return f, true, nil
+}
+
+// FortsetzenSpeichern schreibt das Fenster atomar.
+func FortsetzenSpeichern(dataDir string, f Fortsetzen) error {
+	return schreiben(FortsetzenPfad(dataDir), f)
+}
+
+// FortsetzenLoeschen entfernt das Fenster.
+func FortsetzenLoeschen(dataDir string) {
+	_ = os.Remove(FortsetzenPfad(dataDir))
+}

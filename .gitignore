@@ -7,3 +7,13 @@
 # lokale Laufzeitordner (Dev-Koordinator, Test-Starter, Testläufe)
 /run/
 /tmp/
+
+# Server-Mods (mods/*): Gradle-Ausgaben und gebaute Jars gehören nie ins Repo
+# (und damit nie in den öffentlichen Export); nur der Gradle-Wrapper ist
+# eingecheckt.
+/mods/*/build/
+/mods/*/.gradle/
+/mods/*/run/
+/mods/*/out/
+*.jar
+!/mods/*/gradle/wrapper/gradle-wrapper.jar

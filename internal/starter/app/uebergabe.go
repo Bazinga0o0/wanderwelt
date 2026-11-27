@@ -51,7 +51,12 @@ var (
 	hostRun = host.Run
 	// measureScore misst die Leistung (wie bei „Spielen“).
 	measureScore = func(ctx context.Context, c *client.Client, xmxMB int) (api.Score, error) {
-		return bench.Measure(ctx, c, xmxMB)
+		s, err := bench.Measure(ctx, c, xmxMB)
+		if err != nil {
+			return s, err
+		}
+		running, known := minecraftLaeuft()
+		return mitClientReserve(s, running, known), nil
 	}
 	// takeoverPrepare sammelt Manifest, Profil und Abhängigkeiten.
 	takeoverPrepare = (*App).prepare
@@ -509,4 +514,20 @@ func handoverActive(st *api.Status) bool {
 func isTarget(h *api.HostInfo, to api.HostInfo) bool {
 	return to.Email != "" && strings.EqualFold(h.Email, to.Email) ||
 		to.Email == "" && to.MinecraftName != "" && strings.EqualFold(h.MinecraftName, to.MinecraftName)
+}
+
+// clientReserveMB ist der RAM, den der Minecraft-Client noch braucht, wenn er
+// bei der Messung nicht läuft (Annahme: wer hostet, spielt auch selbst, der
+// Client läuft also zusätzlich zum Server). Läuft er schon, steckt sein RAM
+// bereits im gemessenen Wert „verfügbar“.
+const clientReserveMB = 4096
+
+// mitClientReserve zieht von RAMFreeMB die Client-Reserve ab, wenn Minecraft
+// nachweislich nicht läuft; läuft es oder ist es unbekannt, bleibt der
+// gemessene Wert. Der Gesamt-RAM bleibt unberührt.
+func mitClientReserve(s api.Score, running, known bool) api.Score {
+	if known && !running {
+		s.RAMFreeMB = max(0, s.RAMFreeMB-clientReserveMB)
+	}
+	return s
 }

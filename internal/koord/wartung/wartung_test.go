@@ -97,3 +97,47 @@ func TestBericht(t *testing.T) {
 		t.Errorf("Haengt: %q", h)
 	}
 }
+
+// Fortsetzen-Fenster: nur nach einer wirklich gestoppten Wartung, Beginn nach
+// dem Vorlauf, Verfall nach der Dauer, Persistenz.
+func TestFortsetzen(t *testing.T) {
+	z, _ := Starten(Zustand{}, t0, 60*time.Second, "Update")
+	if _, ok := NeuesFortsetzen(z, t0.Add(30*time.Second)); ok {
+		t.Error("Fenster schon in der Ansage-Frist (niemand hat gestoppt)")
+	}
+	if _, ok := NeuesFortsetzen(Zustand{}, t0); ok {
+		t.Error("Fenster ohne Wartung")
+	}
+	ende := t0.Add(time.Hour)
+	f, ok := NeuesFortsetzen(z, ende)
+	if !ok || !f.Since.Equal(t0) {
+		t.Fatalf("Fenster fehlt oder falsche Kennung: %+v %v", f, ok)
+	}
+	if f.OpensIn(ende) != FortsetzenVorlauf || f.UntilIn(ende) != FortsetzenDauer {
+		t.Errorf("Restzeiten %v %v", f.OpensIn(ende), f.UntilIn(ende))
+	}
+	if got := f.OpensIn(ende.Add(2 * time.Minute)); got != 0 {
+		t.Errorf("OpensIn nach dem Beginn %v, erwartet 0", got)
+	}
+	if !f.Offen(ende.Add(FortsetzenDauer-time.Second)) || f.Offen(ende.Add(FortsetzenDauer)) {
+		t.Error("Verfall nicht genau nach der Dauer")
+	}
+	if (Fortsetzen{}).Offen(ende) {
+		t.Error("Nullwert darf nie offen sein")
+	}
+	dir := t.TempDir()
+	if _, ok, err := FortsetzenLaden(dir); ok || err != nil {
+		t.Fatalf("ohne Datei: %v %v", ok, err)
+	}
+	if err := FortsetzenSpeichern(dir, f); err != nil {
+		t.Fatal(err)
+	}
+	g, ok, err := FortsetzenLaden(dir)
+	if err != nil || !ok || !g.Since.Equal(f.Since) || !g.Until.Equal(f.Until) {
+		t.Fatalf("Laden: %+v %v %v", g, ok, err)
+	}
+	FortsetzenLoeschen(dir)
+	if _, ok, _ := FortsetzenLaden(dir); ok {
+		t.Error("nach dem Löschen noch da")
+	}
+}

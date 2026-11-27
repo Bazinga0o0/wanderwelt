@@ -81,6 +81,19 @@ mods:
     url: "https://cdn.modrinth.com/data/VSNURh3q/versions/qwS7dYKj/c2me-fabric-mc26.2-0.4.2-alpha.0.71.jar"
     hash: "sha512:a45125e3eed782aebde7e2d434bd8a5821ac053f5eec3c6f16f75bd7b2fe9f4a4e0e87ee7b403192cba4481a56cc9458e10c682f9013c47eac6bcd3c648fd90e"
     optional: true
+  # wanderwelt-chatverlauf 1.1.0: eigene Server-Mod (Quelle mods/chatverlauf im
+  # Repo), speichert den Chat der Welt und zeigt Beitretenden die letzten
+  # Nachrichten; je Welt im Fenster ein-/ausschaltbar, Größengrenze einstellbar
+  # (README „Chat-Verlauf“, „Chat-Verlauf-Mod ins Manifest eintragen“).
+  # Bewusst NICHT optional: Fehlt die Mod, würde der Chat nicht mitgeschrieben.
+  # Es gibt keine externe URL: bauen (mods/chatverlauf, gradlew build), nach
+  # <data_dir>/artifacts/ legen und den Hash bilden:
+  #   echo "sha512:$(sha512sum wanderwelt-chatverlauf-26.2-1.1.0.jar | cut -d' ' -f1)"
+  # PLATZHALTER: hash durch den Hash der abgelegten Datei ersetzen. Neue Version:
+  # unter neuem Dateinamen ablegen, url und hash umstellen.
+  - name: wanderwelt-chatverlauf
+    url: "wanderwelt:wanderwelt-chatverlauf-26.2-1.1.0.jar"
+    hash: "sha512:HASH-DER-ABGELEGTEN-DATEI"
 
 # Konfigdateien für den Server-Ordner (optional; README „Konfigdateien im
 # Manifest“). path: relativ zum Server-Ordner, nur unterhalb von config/,

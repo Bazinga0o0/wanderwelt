@@ -212,6 +212,15 @@ func (u *oberflaeche) kopf(gtx layout.Context, s schnappschuss, admin bool) layo
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						return t.text(gtx, schrift{groesse: 18, fett: true, farbe: t.f.text}, "wanderwelt")
 					}),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						// Version der laufenden Instanz, klein und leise neben dem Namen.
+						if s.z == nil || s.z.Version == "" {
+							return layout.Dimensions{}
+						}
+						return layout.Inset{Left: 8, Top: 4}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							return t.text(gtx, schrift{groesse: 12, farbe: t.f.leise}, "Version "+s.z.Version)
+						})
+					}),
 					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 						return layout.Dimensions{Size: image.Pt(gtx.Constraints.Min.X, 0)}
 					}),
