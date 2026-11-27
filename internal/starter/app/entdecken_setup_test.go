@@ -276,3 +276,23 @@ func TestBeitrittsLinkBeiMehrerenGruppenZeigtEntdecken(t *testing.T) {
 		t.Error("bei einer Gruppe nicht")
 	}
 }
+
+// Wird in „Entdecken“ nur der Servername ohne Port eingegeben, speichert die
+// Einrichtung host:port mit dem Standardport des Tunnel-Servers (der
+// tunnel-Client verlangt einen Port).
+func TestEntdeckenServerOhnePortBekommtStandardPort(t *testing.T) {
+	w := neueEntdeckWelt(t)
+	t.Setenv("WANDERWELT_HOME", t.TempDir())
+	k := neuerKoord(t, "Wandergruppe", api.YouNone)
+	w.web.setze(k)
+	s := &setupStubs{server: []string{"tunnel.example.org"}, token: entdeckToken, picks: []int{0}}
+	stubSetup(t, w.web.ts.URL, s)
+	a := busyApp(t, nil)
+	inv, _, err := a.entdeckenSetup(context.Background())
+	if err != nil || inv == nil {
+		t.Fatalf("%+v %v", inv, err)
+	}
+	if inv.TunnelServer != "tunnel.example.org:7443" {
+		t.Errorf("TunnelServer = %q, erwartet tunnel.example.org:7443", inv.TunnelServer)
+	}
+}

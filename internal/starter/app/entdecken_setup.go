@@ -148,7 +148,7 @@ func (a *App) entdeckenSetup(ctx context.Context) (*group.Invite, string, error)
 		if !ok {
 			return nil, "", errCanceled
 		}
-		inv := &group.Invite{Coordinator: ds[i].URL, TunnelServer: server, WebURL: web}
+		inv := &group.Invite{Coordinator: ds[i].URL, TunnelServer: group.TunnelAddr(server), WebURL: web}
 		log.Printf("Einrichtung: Entdecken: Gruppe %s gewählt", hostVon(ds[i].URL))
 		return inv, token, nil
 	}

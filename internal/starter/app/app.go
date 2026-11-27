@@ -154,6 +154,9 @@ type App struct {
 	// nameAsked: Die Einrichtung hat die Namensfrage gestellt; der Tray fragt
 	// beim selben Start nicht noch einmal.
 	nameAsked atomic.Bool
+	// tunnelHinweis: Der Hinweis „Tunnel startet nicht“ kam in dieser
+	// Host-Sitzung schon (nur einmal je Sitzung).
+	tunnelHinweis atomic.Bool
 
 	// presetToken: Token aus „Entdecken“ der Einrichtung (nur während der
 	// Einrichtung, nie im Log).

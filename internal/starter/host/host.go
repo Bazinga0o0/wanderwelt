@@ -36,6 +36,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"maps"
 	"net/http"
@@ -220,6 +221,10 @@ func HoldSyncQuiet(ctx context.Context) (unlock func(), err error) { return hold
 // tunnelBackoff sind die Pausen vor einem Neustart von tunnel.
 var tunnelBackoff = []time.Duration{2 * time.Second, 5 * time.Second, 10 * time.Second, 30 * time.Second}
 
+// tunnelProblemFails: Nach so vielen sofortigen Abbrüchen von tunnel in Folge
+// meldet die Sitzung das Problem (Deps.OnTunnelProblem).
+const tunnelProblemFails = 3
+
 // ErrFenced: Run hat den Server gestoppt, weil der Zuschlag nicht mehr
 // gesichert war (60 s ohne Lebenszeichen oder vom Koordinator abgelehnt).
 // Der Stand ist, wenn der Stopp sauber war, als PendingUpload vorgemerkt.
@@ -340,6 +345,12 @@ type Deps struct {
 	// tunnel erreichbar ist (wie ready im Lebenszeichen). Läuft in der
 	// Schleife der Sitzung und darf nicht blockieren.
 	OnReady func()
+	// OnTunnelProblem (darf nil sein) läuft, wenn der tunnel-Client wiederholt
+	// sofort endet (ab tunnelProblemFails Abbrüchen in Folge, danach bei jedem
+	// weiteren). grund ist die letzte Fehlerzeile aus tunnel.log („error: …“,
+	// gekürzt), sonst leer. Läuft in der Schleife der Sitzung und darf nicht
+	// blockieren.
+	OnTunnelProblem func(grund string)
 	// Discarded (darf nil sein) bekommt jeden lokalen Stand, den die Sitzung
 	// verwirft (nach Dir()/verworfen-<Zeit> verschoben statt hochgeladen).
 	// Läuft in der Sitzung und darf nicht blockieren.
@@ -2562,7 +2573,11 @@ func (s *Session) onTunnelExit(slot *tunnelSlot, t *tunnelProc) {
 	}
 	log.Printf("host: tunnel (Port %d) beendet: %v", slot.port, t.err)
 	now := s.clk.Now()
-	s.scheduleTunnel(slot, now, now.Sub(t.started))
+	ran := now.Sub(t.started)
+	s.scheduleTunnel(slot, now, ran)
+	if ran < tunnelStable && slot.fails >= tunnelProblemFails && s.d.OnTunnelProblem != nil {
+		s.d.OnTunnelProblem(tunnelFehlergrund())
+	}
 }
 
 // scheduleTunnel plant den Neustart mit Pause 2 s, 5 s, 10 s, dann 30 s;
@@ -2641,7 +2656,7 @@ type tunnelConfig struct {
 // SYSTEM) darf sie lesen.
 func writeTunnelConfig(g *group.Group) error {
 	data, err := yaml.Marshal(tunnelConfig{
-		Server:             g.TunnelServer,
+		Server:             group.TunnelAddr(g.TunnelServer),
 		Token:              g.Token,
 		InsecureSkipVerify: g.TunnelInsecureSkipVerify,
 	})
@@ -2671,4 +2686,35 @@ func writeTunnelConfig(g *group.Group) error {
 		os.Remove(tmp)
 	}
 	return err
+}
+
+// tunnelFehlergrund liest die letzte Fehlerzeile („error: …“) aus dem Ende von
+// Home()/logs/tunnel.log, gekürzt auf 160 Zeichen; leer, wenn es keine gibt.
+// Die Zeilen des tunnel-Clients enthalten keine Tokens.
+func tunnelFehlergrund() string {
+	f, err := os.Open(filepath.Join(group.Home(), "logs", "tunnel.log"))
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return ""
+	}
+	const tail = 8 << 10
+	off := max(0, st.Size()-tail)
+	buf := make([]byte, st.Size()-off)
+	if _, err := f.ReadAt(buf, off); err != nil && !errors.Is(err, io.EOF) {
+		return ""
+	}
+	last := ""
+	for _, l := range strings.Split(string(buf), "\n") {
+		if l = strings.TrimSpace(l); strings.HasPrefix(l, "error:") {
+			last = l
+		}
+	}
+	if r := []rune(last); len(r) > 160 {
+		last = string(r[:160]) + "…"
+	}
+	return last
 }

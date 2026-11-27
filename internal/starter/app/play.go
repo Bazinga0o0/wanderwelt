@@ -533,6 +533,7 @@ func (a *App) startHost(in playInput, resp *api.PlayResponse, dauer bool, ov *ov
 	}
 	pr := newPercent(func(p int) { a.setDetail(fmt.Sprintf("lädt die Welt: %d %%", p)) })
 	ho := a.uebergabe.newSession()
+	a.tunnelHinweis.Store(false)
 	d := host.Deps{
 		Handover:         ho,
 		OnHandover:       a.onHandover,
@@ -551,6 +552,7 @@ func (a *App) startHost(in playInput, resp *api.PlayResponse, dauer bool, ov *ov
 		MinecraftVersion: in.m.MinecraftVersion,
 		HashCache:        a.hc,
 		DownloadProgress: pr.report,
+		OnTunnelProblem:  a.onTunnelProblem,
 		OnReady: func() {
 			a.dauerReady()
 			go a.serverReadyMode(addr, in.m.MinecraftVersion, dauer, ov, in.fort)
@@ -829,4 +831,23 @@ func (w *watchedServer) PID() int {
 		return p.PID()
 	}
 	return 0
+}
+
+// onTunnelProblem zeigt, dass der tunnel-Client nicht startet: im Fenster als
+// Detail und einmal je Host-Sitzung als Hinweis, mit der letzten Fehlerzeile
+// aus tunnel.log. Solange tunnel nicht läuft, kann niemand beitreten.
+func (a *App) onTunnelProblem(grund string) {
+	a.setDetail("Tunnel startet nicht – niemand kann beitreten (siehe Hinweis)")
+	if !a.tunnelHinweis.CompareAndSwap(false, true) {
+		return
+	}
+	text := "Der Tunnel startet nicht, deshalb kann niemand deiner Welt beitreten."
+	switch {
+	case strings.Contains(grund, "missing port"):
+		text += "\n\nIn deiner Gruppendatei fehlt beim Tunnel-Server der Port. Trage tunnel_server mit Port ein (zum Beispiel twebl.de:7443)."
+	case grund != "":
+		text += "\n\nGrund: " + grund
+	}
+	text += "\n\nPrüfe Windows-Sicherheit (Schutzverlauf: wurde tunnel.exe blockiert?) und die Firewall. Mehr steht im Log (Tray: Log öffnen) und in logs\tunnel.log."
+	go notify(text)
 }
