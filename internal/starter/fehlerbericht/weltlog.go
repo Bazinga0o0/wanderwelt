@@ -64,7 +64,7 @@ var praefixeJa = []string{
 	"host:", "mcserver:", "worldsync:", "Fortsetzen:", "Recover:", "Übergabe", "Zurückholen:",
 	"Nachreichen:", "Host-Sitzung", "Hosten ", "Welt übernehmen:", "Welt:", "Welt gewählt:",
 	"Play:", "Spielen:", "Dauerbetrieb", "Selbst-Update", "Update:", "Koordinator:",
-	"Notfallkopie:", "Bereitschaft:", "Messung", "Mitspielen:", "Wartefenster:", "Wartung",
+	"winsys:", "Notfallkopie:", "Bereitschaft:", "Messung", "Mitspielen:", "Wartefenster:", "Wartung",
 	"wanderwelt ", "aktualisiert auf", "Fehlermeldung:", "Zustand nicht gespeichert:",
 }
 

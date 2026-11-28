@@ -1,0 +1,291 @@
+#!/bin/bash
+# wanderwelt-rollout: vorgemerkte Updates auf dem Koordinator-Server einspielen,
+# sobald die Welt seit 5 Minuten von niemandem gehostet wird.
+#
+# Läuft als root, aufgerufen vom Timer wanderwelt-rollout.timer alle 30 s
+# („run“). Ein Eintrag („Vormerkung“) liegt als Ordner unter
+# $Q/queue/<name>/ und enthält (alles optional außer SHA256SUMS):
+#   koordinator     neues Koordinator-Programm (-> /opt/wanderwelt/, Neustart)
+#   artifacts/*     Dateien für <data_dir>/artifacts/ (z. B. wanderwelt-0.1.10.exe)
+#   starter-version Text „0.1.10“: setzt im Manifest starter.version/url/sha256/size
+#                   aus artifacts/wanderwelt-<version>.exe
+#   manifest.py     Skript „python3 manifest.py <alt> <neu>“, ändert das Manifest
+#   config.py       dasselbe für koordinator.yaml (Neustart)
+#   SHA256SUMS      Prüfsummen aller Dateien des Eintrags (Pflicht)
+# Alles geschieht erst, wenn niemand mehr hostet (und seit IDLE_S Sekunden
+# niemand). Manifest und Datei kommen also zusammen. Vorher wird gesichert,
+# nach dem Einspielen geprüft und bei einem Fehler zurückgerollt.
+#
+# Aufruf: wanderwelt-rollout run | status | cancel <name>
+set -u
+
+Q=${WW_ROLLOUT_DIR:-/var/lib/wanderwelt-rollout}
+DATA=${WW_DATA_DIR:-/var/lib/wanderwelt}
+BIN=${WW_BIN:-/opt/wanderwelt/wanderwelt-koordinator}
+ETC=${WW_ETC:-/etc/wanderwelt}
+BACKUPS=${WW_BACKUPS:-/var/backups/wanderwelt}
+SERVICE=${WW_SERVICE:-wanderwelt-koordinator}
+IDLE_S=${WW_IDLE_S:-300}
+LISTEN=${WW_LISTEN:-127.0.0.1:8470}
+SYSTEMCTL=${WW_SYSTEMCTL:-systemctl}
+RUNUSER=${WW_RUNUSER:-runuser}
+SETTLE_S=${WW_SETTLE_S:-10}
+KEEP=3
+
+log() {
+	local line
+	line="$(date '+%F %T') $*"
+	echo "$line" >>"$Q/log"
+	echo "$line" >&2
+}
+
+# busy: 0 = jemand hostet (Lease gültig oder Datei nicht lesbar), 1 = niemand.
+busy() {
+	python3 - "$DATA/lease.json" <<'PY'
+import datetime, json, re, sys
+
+def main():
+    try:
+        d = json.load(open(sys.argv[1]))
+    except FileNotFoundError:
+        return 1
+    h = d.get("host")
+    if not h:
+        return 1
+    s = h["expires_at"]
+    s = re.sub(r"(\.\d{6})\d*Z$", r"\1Z", s).replace("Z", "+00:00")
+    exp = datetime.datetime.fromisoformat(s)
+    return 0 if exp > datetime.datetime.now(datetime.timezone.utc) else 1
+
+try:
+    rc = main()
+except Exception:
+    rc = 0  # im Zweifel: es wird gehostet
+sys.exit(rc)
+PY
+}
+
+# patch_starter <alt> <neu> <version> <exe>: starter-Block im Manifest.
+patch_starter() {
+	python3 - "$@" <<'PY'
+import hashlib, os, re, sys
+src, dst, ver, exe = sys.argv[1:5]
+s = open(src, encoding="utf-8", newline="").read()
+i = s.find("\nstarter:")
+if i < 0:
+    sys.exit("kein starter-Block im Manifest")
+head, tail = s[: i + 1], s[i + 1 :]
+h = hashlib.sha256(open(exe, "rb").read()).hexdigest()
+n = os.path.getsize(exe)
+name = os.path.basename(exe)
+for pat, rep in [
+    (r'(version:\s*)"[^"]*"', r'\g<1>"%s"' % ver),
+    (r'(url:\s*)"wanderwelt:[^"]*"', r'\g<1>"wanderwelt:%s"' % name),
+    (r'(sha256:\s*)"[0-9a-f]+"', r'\g<1>"%s"' % h),
+    (r'(size:\s*)\d+', r'\g<1>%d' % n),
+]:
+    tail, c = re.subn(pat, rep, tail, count=1)
+    if c != 1:
+        sys.exit("starter-Block: Stelle nicht gefunden: " + pat)
+open(dst, "w", encoding="utf-8", newline="").write(head + tail)
+PY
+}
+
+service_ok() { # nach dem Einspielen: läuft, antwortet, kein Neustart-Schleife
+	local r0=$1 r1 code
+	$SYSTEMCTL is-active --quiet "$SERVICE" || return 1
+	r1=$($SYSTEMCTL show -p NRestarts --value "$SERVICE" 2>/dev/null || echo 0)
+	[ "${r1:-0}" = "${r0:-0}" ] || return 1
+	code=$(curl -s -o /dev/null -m 5 -w '%{http_code}' "http://$LISTEN/v1/ping" || true)
+	[ -n "$code" ] && [ "$code" != "000" ]
+}
+
+restore() { # <backup-ordner> <neustart:0|1>
+	local b=$1
+	log "Zurückrollen aus $b"
+	$SYSTEMCTL stop "$SERVICE" >/dev/null 2>&1 || true
+	cp -a "$b/wanderwelt-koordinator" "$BIN"
+	cat "$b/manifest.yaml" >"$ETC/manifest.yaml"
+	cat "$b/koordinator.yaml" >"$ETC/koordinator.yaml"
+	$SYSTEMCTL start "$SERVICE" || true
+}
+
+fail() { # <eintrag> <grund>
+	local e=$1 ts
+	ts=$(date +%Y%m%d-%H%M%S)
+	log "FEHLER $e: $2"
+	mkdir -p "$Q/failed"
+	echo "$2" >"$Q/queue/$e/fehler"
+	mv "$Q/queue/$e" "$Q/failed/$e-$ts"
+}
+
+prune() {
+	local pat
+	for pat in "$BACKUPS/rollout-*" "$BACKUPS/sicherung-rollout-*"; do
+		# shellcheck disable=SC2012
+		ls -1dt $pat 2>/dev/null | tail -n +$((KEEP + 1)) | while read -r old; do
+			rm -rf -- "$old"
+		done
+	done
+}
+
+apply() { # <eintrag>
+	local e=$1 d="$Q/queue/$1" ts b tmp restart=0 r0 f
+	ts=$(date +%Y%m%d-%H%M%S)
+	b="$BACKUPS/rollout-$e-$ts"
+	log "Eintrag $e: Start"
+
+	[ -f "$d/SHA256SUMS" ] || { fail "$e" "SHA256SUMS fehlt"; return 1; }
+	(cd "$d" && sha256sum -c --quiet SHA256SUMS >/dev/null) || { fail "$e" "Prüfsummen stimmen nicht"; return 1; }
+	[ -f "$d/koordinator" ] && restart=1
+	[ -f "$d/config.py" ] && restart=1
+
+	# 1. Neue Manifest-/Konfigurationsdateien berechnen, noch nichts ändern.
+	tmp=$(mktemp -d)
+	cp "$ETC/manifest.yaml" "$tmp/manifest.yaml"
+	cp "$ETC/koordinator.yaml" "$tmp/koordinator.yaml"
+	if [ -f "$d/starter-version" ]; then
+		local v exe
+		v=$(tr -d '[:space:]' <"$d/starter-version")
+		exe="$d/artifacts/wanderwelt-$v.exe"
+		[ -f "$exe" ] || { rm -rf "$tmp"; fail "$e" "artifacts/wanderwelt-$v.exe fehlt"; return 1; }
+		patch_starter "$tmp/manifest.yaml" "$tmp/manifest.neu" "$v" "$exe" \
+			|| { rm -rf "$tmp"; fail "$e" "Manifest (starter) nicht änderbar"; return 1; }
+		mv "$tmp/manifest.neu" "$tmp/manifest.yaml"
+	fi
+	if [ -f "$d/manifest.py" ]; then
+		python3 "$d/manifest.py" "$tmp/manifest.yaml" "$tmp/manifest.neu" \
+			|| { rm -rf "$tmp"; fail "$e" "manifest.py ist gescheitert"; return 1; }
+		mv "$tmp/manifest.neu" "$tmp/manifest.yaml"
+	fi
+	if [ -f "$d/config.py" ]; then
+		python3 "$d/config.py" "$tmp/koordinator.yaml" "$tmp/koordinator.neu" \
+			|| { rm -rf "$tmp"; fail "$e" "config.py ist gescheitert"; return 1; }
+		mv "$tmp/koordinator.neu" "$tmp/koordinator.yaml"
+	fi
+
+	# 2. Sicherung der Dateien.
+	mkdir -p "$b" && chmod 750 "$b"
+	cp -a "$BIN" "$b/wanderwelt-koordinator"
+	cp -a "$ETC/manifest.yaml" "$ETC/koordinator.yaml" "$b/"
+
+	# 3. Dateien ablegen (harmlos, auch ohne Neustart).
+	if [ -d "$d/artifacts" ]; then
+		for f in "$d"/artifacts/*; do
+			[ -f "$f" ] && install -o wanderwelt -g wanderwelt -m 0640 "$f" "$DATA/artifacts/"
+		done
+	fi
+
+	# Letzte Prüfung: hostet inzwischen jemand?
+	if busy; then
+		log "Eintrag $e: es wird gehostet, warte weiter"
+		rm -rf "$tmp"
+		return 2
+	fi
+
+	r0=$($SYSTEMCTL show -p NRestarts --value "$SERVICE" 2>/dev/null || echo 0)
+	if [ "$restart" = 1 ]; then
+		# 4a. Dienst anhalten, Daten sichern (Blobs per Hardlink), einspielen, starten.
+		$SYSTEMCTL stop "$SERVICE" || { rm -rf "$tmp"; fail "$e" "Dienst ließ sich nicht anhalten"; return 1; }
+		if ! $RUNUSER -u wanderwelt -- "$BIN" sicherung "$BACKUPS/sicherung-rollout-$e-$ts" --config "$ETC/koordinator.yaml" >>"$Q/log" 2>&1; then
+			$SYSTEMCTL start "$SERVICE" || true
+			rm -rf "$tmp"
+			fail "$e" "Datensicherung gescheitert, nichts geändert"
+			return 1
+		fi
+		[ -f "$d/koordinator" ] && install -m 0755 "$d/koordinator" "$BIN"
+		cat "$tmp/manifest.yaml" >"$ETC/manifest.yaml"
+		cat "$tmp/koordinator.yaml" >"$ETC/koordinator.yaml"
+		$SYSTEMCTL start "$SERVICE" || true
+		r0=0
+		sleep "$SETTLE_S"
+		if ! service_ok 0; then
+			restore "$b" 1
+			rm -rf "$tmp"
+			fail "$e" "Dienst nach dem Update nicht gesund, zurückgerollt"
+			return 1
+		fi
+	else
+		# 4b. Nur das Manifest: im Betrieb neu laden (SIGHUP), kein Neustart.
+		cat "$tmp/manifest.yaml" >"$ETC/manifest.yaml"
+		$SYSTEMCTL reload "$SERVICE" || true
+		sleep 3
+		if ! service_ok "$r0"; then
+			restore "$b" 0
+			rm -rf "$tmp"
+			fail "$e" "Dienst nach dem Neuladen nicht gesund, zurückgerollt"
+			return 1
+		fi
+	fi
+	rm -rf "$tmp"
+
+	# 5. Fertig: Eintrag nach done/, große Dateien weg (liegen jetzt am Ziel).
+	mkdir -p "$Q/done"
+	rm -rf "$d/koordinator" "$d/artifacts"
+	echo "eingespielt $(date '+%F %T'), Sicherung $b" >"$d/ergebnis"
+	mv "$d" "$Q/done/$e-$ts"
+	prune
+	log "Eintrag $e: eingespielt (Sicherung $b)"
+	return 0
+}
+
+cmd_run() {
+	mkdir -p "$Q/queue" "$Q/done" "$Q/failed"
+	exec 9>"$Q/lock"
+	flock -n 9 || exit 0
+	if busy; then
+		rm -f "$Q/idle-since"
+		exit 0
+	fi
+	[ -f "$Q/idle-since" ] || date +%s >"$Q/idle-since"
+	local entries e since now
+	entries=$(ls -1 "$Q/queue" 2>/dev/null | grep -v '^\.' | sort)
+	[ -n "$entries" ] || exit 0
+	since=$(cat "$Q/idle-since")
+	now=$(date +%s)
+	[ $((now - since)) -ge "$IDLE_S" ] || exit 0
+	for e in $entries; do
+		apply "$e"
+		case $? in
+		0) ;;
+		2) break ;; # es wird gehostet, später weiter
+		*) break ;; # Fehler: spätere Einträge bauen darauf auf, nicht weitermachen
+		esac
+	done
+}
+
+cmd_status() {
+	local now since
+	now=$(date +%s)
+	if busy; then
+		echo "Hosting: JA (es wird gehostet)"
+	elif [ -f "$Q/idle-since" ]; then
+		since=$(cat "$Q/idle-since")
+		echo "Hosting: niemand seit $((now - since)) s (nötig: $IDLE_S s)"
+	else
+		echo "Hosting: niemand (Zeitnahme beginnt beim nächsten Lauf)"
+	fi
+	echo "Vorgemerkt:"
+	ls -1 "$Q/queue" 2>/dev/null | grep -v '^\.' | sed 's/^/  /'
+	echo "Eingespielt (letzte 5):"
+	ls -1t "$Q/done" 2>/dev/null | head -5 | sed 's/^/  /'
+	echo "Fehlgeschlagen (letzte 5):"
+	ls -1t "$Q/failed" 2>/dev/null | head -5 | sed 's/^/  /'
+	echo "Log:"
+	tail -n 8 "$Q/log" 2>/dev/null | sed 's/^/  /'
+}
+
+cmd_cancel() {
+	[ -n "${1:-}" ] || { echo "Aufruf: wanderwelt-rollout cancel <name>" >&2; exit 2; }
+	case $1 in */* | .*) echo "ungültiger Name" >&2; exit 2 ;; esac
+	[ -d "$Q/queue/$1" ] || { echo "nicht vorgemerkt: $1" >&2; exit 1; }
+	rm -rf "$Q/queue/$1" && log "Vormerkung $1 zurückgenommen"
+}
+
+mkdir -p "$Q"
+case "${1:-}" in
+run) cmd_run ;;
+status) cmd_status ;;
+cancel) shift; cmd_cancel "$@" ;;
+*) echo "Aufruf: wanderwelt-rollout run | status | cancel <name>" >&2; exit 2 ;;
+esac

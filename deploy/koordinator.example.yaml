@@ -80,6 +80,19 @@ gruppe:
 #   wartung: true          # angekündigt/vorbei (an)
 #   uebergabe: true        # Host-Übergabe läuft/abgeschlossen (an)
 
+# Karte der Oberwelt (README „Karte (Admin)“). Standard: aus; Pflicht ist nur
+# binary (absoluter Pfad des Programms „karte“). Erzeugt wird nach angenommenen
+# Ständen (höchstens alle min_interval) und einmal nach dem Schluss-Stand eines
+# Hosts, nie während einer Wartung. Vorhandene Karten werden auch ohne
+# Programm ausgeliefert. Gilt erst nach einem Neustart.
+# karte:
+#   binary: /opt/wanderwelt/karte
+#   colors: /opt/wanderwelt/farben.json  # Farbtabelle (JSON); Standard: eingebaute
+#   nice: 10             # 0–19 (nur Linux), Standard 10
+#   threads: 1           # 1–4, Standard 1
+#   min_interval: 30m    # 1m–24h, Standard 30m
+#   max_bytes: 1GiB      # größte Karte je Welt (1MiB–1TiB), Standard 1GiB
+
 # Mitglieder: tunnel-Konto (E-Mail, Groß/Klein egal) und Minecraft-Name.
 # minecraft darf fehlen: Dann meldet das Mitglied den Namen beim Einrichten
 # des Starters selbst. Whitelist und Ops entstehen aus dieser Liste; was

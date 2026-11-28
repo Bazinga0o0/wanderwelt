@@ -114,7 +114,7 @@ func (e *memberEnv) me(as who) api.Me {
 
 func (e *memberEnv) setRole(as who, email string, admin, op bool) int {
 	e.t.Helper()
-	return call(e.t, e.base, as, http.MethodPut, "/v1/members/"+email, api.RoleRequest{Admin: admin, Op: op}, nil)
+	return call(e.t, e.base, as, http.MethodPut, "/v1/members/"+e.key(email), api.RoleRequest{Admin: admin, Op: op}, nil)
 }
 
 // hostSettings lässt as hosten (falls noch nicht) und liefert die
@@ -212,10 +212,12 @@ func TestMembersList(t *testing.T) {
 	l := e.host()
 	e.heartbeat(l, "alice", "Carol")
 
+	// Datenschutz: nur die eigene Zeile (Alice) trägt die Adresse; in fremden
+	// Zeilen steht die Kennung (auch in email, für ältere Starter).
 	want := []api.MemberInfo{
-		{Email: emailA, MinecraftName: "Alice", Admin: true, Op: true, Online: true},
-		{Email: emailB, MinecraftName: "Bob", Op: true},
-		{Email: emailC, MinecraftName: "Carol", Online: true},
+		{Email: emailA, ID: e.key(emailA), MinecraftName: "Alice", Admin: true, Op: true, Online: true},
+		{Email: e.key(emailB), ID: e.key(emailB), MinecraftName: "Bob", Op: true},
+		{Email: e.key(emailC), ID: e.key(emailC), MinecraftName: "Carol", Online: true},
 	}
 	if got := e.members(userA); !slices.Equal(got, want) {
 		t.Errorf("Mitglieder %+v\nwant %+v", got, want)
@@ -293,10 +295,10 @@ func TestPutRoleAppliesToHostSettings(t *testing.T) {
 		t.Fatalf("Bob vor dem Admin-Recht: %d, want 403", code)
 	}
 	var info api.MemberInfo
-	if code := call(t, e.base, userA, http.MethodPut, "/v1/members/"+emailB, api.RoleRequest{Admin: true, Op: true}, &info); code != http.StatusOK {
+	if code := call(t, e.base, userA, http.MethodPut, "/v1/members/"+e.key(emailB), api.RoleRequest{Admin: true, Op: true}, &info); code != http.StatusOK {
 		t.Fatalf("Bob zum Admin: %d", code)
 	}
-	if want := (api.MemberInfo{Email: emailB, MinecraftName: "Bob", Admin: true, Op: true}); info != want {
+	if want := (api.MemberInfo{Email: e.key(emailB), ID: e.key(emailB), MinecraftName: "Bob", Admin: true, Op: true}); info != want {
 		t.Errorf("Antwort %+v, want %+v", info, want)
 	}
 	if me := e.me(userB); !me.Admin || !me.Op {
@@ -427,8 +429,8 @@ func TestMembersNotAdmin(t *testing.T) {
 		body         any
 	}{
 		{http.MethodGet, "/v1/members", nil},
-		{http.MethodPut, "/v1/members/" + emailB, api.RoleRequest{Admin: true, Op: true}},
-		{http.MethodPut, "/v1/members/" + emailC + "/minecraft", api.MinecraftNameRequest{MinecraftName: "Carol"}},
+		{http.MethodPut, "/v1/members/" + e.key(emailB), api.RoleRequest{Admin: true, Op: true}},
+		{http.MethodPut, "/v1/members/" + e.key(emailC) + "/minecraft", api.MinecraftNameRequest{MinecraftName: "Carol"}},
 		{http.MethodPut, "/v1/storage/budget", api.BudgetRequest{BudgetBytes: 2 * gib}},
 	} {
 		if code := call(t, e.base, userB, c.method, c.path, c.body, nil); code != http.StatusForbidden {
@@ -496,7 +498,7 @@ func TestMembersVersionChanges(t *testing.T) {
 		t.Fatal(code)
 	}
 	step("Carol meldet ihren Namen", 1)
-	if code := call(t, e.base, userA, http.MethodPut, "/v1/members/"+emailB+"/minecraft", api.MinecraftNameRequest{MinecraftName: "Caro"}, nil); code != http.StatusOK {
+	if code := call(t, e.base, userA, http.MethodPut, "/v1/members/"+e.key(emailB)+"/minecraft", api.MinecraftNameRequest{MinecraftName: "Caro"}, nil); code != http.StatusOK {
 		t.Fatal(code)
 	}
 	step("Admin setzt Bobs Namen", 1)
@@ -589,26 +591,26 @@ func TestMeMinecraftRejectsTaken(t *testing.T) {
 func TestAdminSetsMinecraft(t *testing.T) {
 	e := newMemberEnv(t, t.TempDir(), gib)
 	var info api.MemberInfo
-	if code := call(t, e.base, userA, http.MethodPut, "/v1/members/BOB@example.org/minecraft", api.MinecraftNameRequest{MinecraftName: "Caro"}, &info); code != http.StatusOK {
+	if code := call(t, e.base, userA, http.MethodPut, "/v1/members/"+e.key("BOB@example.org")+"/minecraft", api.MinecraftNameRequest{MinecraftName: "Caro"}, &info); code != http.StatusOK {
 		t.Fatalf("Admin setzt Bobs Namen: %d", code)
 	}
-	if info.Email != emailB || info.MinecraftName != "Caro" {
+	if info.ID != e.key(emailB) || info.Email != info.ID || info.MinecraftName != "Caro" {
 		t.Errorf("Antwort %+v", info)
 	}
 	if got := e.me(userB).MinecraftName; got != "Caro" {
 		t.Errorf("Bob heißt %q, want Caro", got)
 	}
-	if code := call(t, e.base, userA, http.MethodPut, "/v1/members/"+emailC+"/minecraft", api.MinecraftNameRequest{MinecraftName: "caro"}, nil); code != http.StatusBadRequest {
+	if code := call(t, e.base, userA, http.MethodPut, "/v1/members/"+e.key(emailC)+"/minecraft", api.MinecraftNameRequest{MinecraftName: "caro"}, nil); code != http.StatusBadRequest {
 		t.Errorf("Name von Bob für Carol: %d, want 400", code)
 	}
-	if code := call(t, e.base, userA, http.MethodPut, "/v1/members/"+emailC+"/minecraft", api.MinecraftNameRequest{MinecraftName: "Carol"}, nil); code != http.StatusOK {
+	if code := call(t, e.base, userA, http.MethodPut, "/v1/members/"+e.key(emailC)+"/minecraft", api.MinecraftNameRequest{MinecraftName: "Carol"}, nil); code != http.StatusOK {
 		t.Errorf("Carols Name: %d", code)
 	}
-	if code := call(t, e.base, userA, http.MethodPut, "/v1/members/niemand@example.org/minecraft", api.MinecraftNameRequest{MinecraftName: "Bob"}, nil); code != http.StatusNotFound {
+	if code := call(t, e.base, userA, http.MethodPut, "/v1/members/"+e.key("niemand@example.org")+"/minecraft", api.MinecraftNameRequest{MinecraftName: "Bob"}, nil); code != http.StatusNotFound {
 		t.Errorf("unbekanntes Mitglied: %d, want 404", code)
 	}
 	// Zurück auf den Namen aus der Konfiguration: Bobs Eintrag fällt weg.
-	if code := call(t, e.base, userA, http.MethodPut, "/v1/members/"+emailB+"/minecraft", api.MinecraftNameRequest{MinecraftName: "Bob"}, nil); code != http.StatusOK {
+	if code := call(t, e.base, userA, http.MethodPut, "/v1/members/"+e.key(emailB)+"/minecraft", api.MinecraftNameRequest{MinecraftName: "Bob"}, nil); code != http.StatusOK {
 		t.Errorf("Bob zurück: %d", code)
 	}
 	names, err := config.LoadNames(filepath.Join(e.dir, config.NamesFile))
@@ -804,3 +806,7 @@ func TestRolesNeverWithoutAdmin(t *testing.T) {
 		t.Errorf("Alice nach der Änderung: %+v", me)
 	}
 }
+
+// key ist der Schlüssel für Pfade der Admin-Aktionen: die Kennung (eine
+// Adresse nimmt die API nur für die eigene an).
+func (e *memberEnv) key(email string) string { return e.srv.IDOf(email) }

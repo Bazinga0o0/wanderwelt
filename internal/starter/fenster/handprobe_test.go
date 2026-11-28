@@ -52,7 +52,7 @@ func TestHandprobeAttrappe(t *testing.T) {
 			var r rolleAuftrag
 			json.Unmarshal(body, &r)
 			for i := range a.members {
-				if a.members[i].Email == r.Email {
+				if a.members[i].Key() == r.ID {
 					a.members[i].Admin, a.members[i].Op = r.Admin, r.Op
 				}
 			}
@@ -95,7 +95,7 @@ func TestHandprobeAttrappe(t *testing.T) {
 				fortschritt = -1
 				z.Busy, z.Phase, z.Detail, z.Hosting = "", "Hostet", "", true
 				z.HostAddr = "wanderwelt.example.de"
-				z.Status.Host = &api.HostInfo{Email: "lukas@example.de", MinecraftName: "Lukas"}
+				z.Status.Host = &api.HostInfo{ID: "e4d1c7a0b9358f26", MinecraftName: "Lukas"}
 				z.Status.HostReady, z.Status.Players = true, []string{"Lukas"}
 				z.Status.HeadCreated = time.Now()
 				seq++

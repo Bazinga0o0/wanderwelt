@@ -544,31 +544,43 @@ func (s *Session) waitQuiet(ctx context.Context) error {
 	if !sleepCtx(ctx, handoverFlushPause) {
 		return context.Cause(ctx)
 	}
+	quiet, _, err := s.waitStable(ctx, handoverQuietFor, handoverQuietPoll, handoverQuietMax)
+	if err == nil && !quiet {
+		log.Printf("host: Welt wurde in %v nicht ruhig – es wird trotzdem kopiert", handoverQuietMax)
+	}
+	return err
+}
+
+// waitStable wartet, bis die Dateien der Welt (Größe und Änderungszeit) quietFor
+// lang unverändert sind; geprüft wird alle poll, höchstens max lang. Meldet,
+// ob Ruhe eingetreten ist (false: die Zeit ist abgelaufen), und wie lange es
+// gewartet hat. Fehler: ctx endet (dessen Ursache) oder die Welt ist nicht
+// lesbar.
+func (s *Session) waitStable(ctx context.Context, quietFor, poll, max time.Duration) (quiet bool, waited time.Duration, err error) {
 	began := time.Now()
 	prev, err := worldState(s.world)
 	if err != nil {
-		return fmt.Errorf("Welt prüfen: %w", err)
+		return false, 0, fmt.Errorf("Welt prüfen: %w", err)
 	}
 	stableSince := time.Now()
 	for {
-		if !sleepCtx(ctx, handoverQuietPoll) {
-			return context.Cause(ctx)
+		if !sleepCtx(ctx, poll) {
+			return false, time.Since(began), context.Cause(ctx)
 		}
 		cur, err := worldState(s.world)
 		if err != nil {
-			return fmt.Errorf("Welt prüfen: %w", err)
+			return false, time.Since(began), fmt.Errorf("Welt prüfen: %w", err)
 		}
 		now := time.Now()
 		if maps.Equal(cur, prev) {
-			if now.Sub(stableSince) >= handoverQuietFor {
-				return nil
+			if now.Sub(stableSince) >= quietFor {
+				return true, now.Sub(began), nil
 			}
 		} else {
 			prev, stableSince = cur, now
 		}
-		if now.Sub(began) >= handoverQuietMax {
-			log.Printf("host: Welt wurde in %v nicht ruhig – es wird trotzdem kopiert", handoverQuietMax)
-			return nil
+		if now.Sub(began) >= max {
+			return false, now.Sub(began), nil
 		}
 	}
 }

@@ -114,12 +114,13 @@ func (s *Server) listView(ctx context.Context) api.ServerLists {
 	return out
 }
 
-// adminName: Minecraft-Name des Mitglieds email, sonst die E-Mail.
+// adminName: Minecraft-Name des Mitglieds email, sonst seine Kennung (nie die
+// E-Mail-Adresse: Die Liste sehen alle Admins).
 func (s *Server) adminName(email string) string {
 	if m, ok := s.member(email); ok && m.Minecraft != "" {
 		return m.Minecraft
 	}
-	return email
+	return "Mitglied " + s.id(email)
 }
 
 // memberByName sucht ein Mitglied über den Minecraft-Namen (Groß/Klein egal).

@@ -40,7 +40,7 @@ const (
 	inhaltBreite = 860
 )
 
-var reiterNamen = [anzahlReiter]string{"Start", "Welt", "Hosten", "Entdecken", "Mitglieder", "Log", "Statistik", "Zustand", "Server"}
+var reiterNamen = [anzahlReiter]string{"Start", "Welt", "Hosten", "Entdecken", "Mitglieder", "Log", "Statistik", "Zustand", "Server", "Karte"}
 
 type sichtbarerHinweis struct {
 	art  string // "info" | "fehler"
@@ -83,6 +83,7 @@ type oberflaeche struct {
 	stat   statistikAnsicht
 	zust   zustandAnsicht
 	srv    serverAnsicht
+	karte  karteAnsicht
 
 	gruppen gruppenAuswahl
 	entd    entdeckenAnsicht
@@ -130,7 +131,7 @@ func (u *oberflaeche) layout(gtx layout.Context) layout.Dimensions {
 		u.zeigeEntdeckenGesehen = z.ZeigeEntdecken
 	}
 	admin := z != nil && z.Me != nil && z.Me.Admin
-	if nurAdmin(u.reiter) && !admin {
+	if !reiterZulaessig(u.reiter, admin, z) {
 		u.reiter = reiterStart
 	}
 	// Bei offener Rückfrage ist alles darunter gesperrt, auch für die
@@ -140,11 +141,12 @@ func (u *oberflaeche) layout(gtx layout.Context) layout.Dimensions {
 		haupt = gtx.Disabled()
 	}
 	for i := range u.tabs {
-		if u.tabs[i].Clicked(haupt) && (!nurAdmin(reiter(i)) || admin) {
+		if u.tabs[i].Clicked(haupt) && reiterZulaessig(reiter(i), admin, z) {
 			u.reiter = reiter(i)
 		}
 	}
 	u.d.setzeReiter(u.reiter)
+	u.karte.abgleich(u, s) // Sitzung der Karte nur, solange ihr Reiter offen ist
 
 	paint.FillShape(gtx.Ops, u.th.f.hinter, clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Op())
 
@@ -235,7 +237,7 @@ func (u *oberflaeche) kopf(gtx layout.Context, s schnappschuss, admin bool) layo
 				return layout.Dimensions{Size: image.Pt(0, gtx.Dp(10))}
 			}
 			return layout.Inset{Left: 8, Right: 20}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return u.reiterLeiste(gtx, admin)
+				return u.reiterLeiste(gtx, admin, s.z)
 			})
 		}),
 	)
@@ -299,12 +301,12 @@ func phasenFarbe(t *thema, z *fensterapi.Zustand) color.NRGBA {
 	return t.f.leise
 }
 
-func (u *oberflaeche) reiterLeiste(gtx layout.Context, admin bool) layout.Dimensions {
+func (u *oberflaeche) reiterLeiste(gtx layout.Context, admin bool, z *fensterapi.Zustand) layout.Dimensions {
 	t := u.th
 	var kinder []layout.FlexChild
 	for i := range u.tabs {
 		r := reiter(i)
-		if nurAdmin(r) && !admin {
+		if !reiterZulaessig(r, admin, z) {
 			continue
 		}
 		kinder = append(kinder, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -374,6 +376,8 @@ func (u *oberflaeche) inhalt(gtx layout.Context, s schnappschuss, admin bool) la
 		return u.zust.layout(gtx, u, s)
 	case reiterServer:
 		return u.srv.layout(gtx, u, s)
+	case reiterKarte:
+		return u.karte.layout(gtx, u, s)
 	}
 	return u.start.layout(gtx, u, s)
 }

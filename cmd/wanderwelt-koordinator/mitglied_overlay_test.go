@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Bazinga0o0/wanderwelt/internal/koord/config"
+	"github.com/Bazinga0o0/wanderwelt/internal/koord/kennung"
 	"github.com/Bazinga0o0/wanderwelt/internal/starter/group"
 )
 
@@ -225,5 +226,35 @@ func TestMitgliedEntfernenAusKonfigurationUndMembersJson(t *testing.T) {
 		if m.Email == "freund@example.org" {
 			t.Error("Freund gilt weiter als Mitglied")
 		}
+	}
+}
+
+// Der Betreiber behält die Sicht: „mitglied liste“ zeigt neben der E-Mail die
+// Kennung, die Mitglieder und Admins im Fenster sehen, sobald der Koordinator
+// den Schlüssel angelegt hat; „mitglied entfernen“ findet ein Mitglied auch
+// über die Kennung.
+func TestMitgliedListeZeigtKennung(t *testing.T) {
+	cfgPath, _, dataDir := setupWithData(t, nil)
+	k, _, err := kennung.Laden(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, stdout, stderr := runMitglied(t, &fakeRunner{}, "liste", "--config", cfgPath)
+	if code != 0 {
+		t.Fatalf("Exit %d: %s", code, stderr)
+	}
+	for _, email := range []string{"admin@example.org", "bob@wanderwelt.invalid"} {
+		if !strings.Contains(stdout, email+" ") || !strings.Contains(stdout, k.ID(email)) {
+			t.Errorf("Zeile zu %s ohne Kennung %s:\n%s", email, k.ID(email), stdout)
+		}
+	}
+	if !strings.Contains(stdout, "KENNUNG") {
+		t.Errorf("Spaltenkopf KENNUNG fehlt:\n%s", stdout)
+	}
+	// Ein Mitglied lässt sich über die Kennung entfernen (hier scheitert es
+	// erst am letzten Admin: Es wurde also gefunden).
+	code, _, stderr = runMitglied(t, &fakeRunner{}, "entfernen", "--config", cfgPath, k.ID("admin@example.org"))
+	if code != 1 || !strings.Contains(stderr, "letzte Admin-Mitglied") {
+		t.Errorf("entfernen über Kennung: Exit %d, stderr: %s", code, stderr)
 	}
 }

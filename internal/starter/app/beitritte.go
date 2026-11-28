@@ -17,7 +17,7 @@ import (
 const maxEinzelHinweise = 3
 
 // beitrittsHinweis meldet einem Admin neue Beitrittsanfragen, höchstens
-// einmal je Anfrage (gemerkt nach E-Mail, solange sie offen ist). Der Hinweis
+// einmal je Anfrage (gemerkt nach Kennung, solange sie offen ist). Der Hinweis
 // nennt nur den Minecraft-Namen, nie die E-Mail-Adresse (Tray und Log).
 func (a *App) beitrittsHinweis(ctx context.Context, c *client.Client, me *api.Me) {
 	a.joinMu.Lock() // Abruf und Merken in einem Schritt (überlappende pollStatus)
@@ -37,7 +37,7 @@ func (a *App) beitrittsHinweis(ctx context.Context, c *client.Client, me *api.Me
 	a.mu.Lock()
 	jetzt := make(map[string]bool, len(liste))
 	for _, r := range liste {
-		k := strings.ToLower(r.Email)
+		k := strings.ToLower(r.Key())
 		jetzt[k] = true
 		if !a.joinGemeldet[k] {
 			neu = append(neu, cmp.Or(r.MinecraftName, "einem neuen Spieler"))

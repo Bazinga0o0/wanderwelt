@@ -350,7 +350,8 @@ func TestEndToEndLeaseAndCommit(t *testing.T) {
 	if resB.Role != api.RoleJoin || resB.LeaseID != 0 {
 		t.Fatalf("B: %+v", resB)
 	}
-	if h := resB.Host; h == nil || h.Email != emailA || h.MinecraftName != "Alice" || h.MachineID != "" {
+	// Datenschutz: B bekommt Alices Adresse nicht, nur Name und Kennung.
+	if h := resB.Host; h == nil || h.Email != "" || h.ID == "" || h.MinecraftName != "Alice" || h.MachineID != "" {
 		t.Fatalf("B: Host %+v", h)
 	}
 	if got := ph.take(); len(got) != 0 {
@@ -428,7 +429,7 @@ func TestEndToEndLeaseAndCommit(t *testing.T) {
 	if code := call(t, base, userB, http.MethodGet, "/v1/status", nil, &status); code != http.StatusOK {
 		t.Fatalf("Status: %d", code)
 	}
-	if status.Host == nil || status.Host.Email != emailA || status.Host.MachineID != "" ||
+	if status.Host == nil || status.Host.Email != "" || status.Host.ID == "" || status.Host.MinecraftName != "Alice" || status.Host.MachineID != "" ||
 		!slices.Equal(status.Players, []string{"Alice", "Bob"}) || status.HeadGeneration != 1 {
 		t.Fatalf("Status: %+v (Host %+v)", status, status.Host)
 	}

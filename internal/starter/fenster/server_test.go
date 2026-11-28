@@ -37,8 +37,8 @@ func TestReiterServerNurAdmins(t *testing.T) {
 			t.Errorf("admin=%v: Reiter bleibt %v", admin, u.reiter)
 		}
 	}
-	if !nurAdmin(reiterServer) || reiterNamen[reiterServer] != "Server" || reiterServer != anzahlReiter-1 {
-		t.Errorf("Reiter Server: nurAdmin %v, Name %q, Stelle %d von %d", nurAdmin(reiterServer), reiterNamen[reiterServer], reiterServer, anzahlReiter)
+	if !nurAdmin(reiterServer) || reiterNamen[reiterServer] != "Server" || reiterServer != reiterZustand+1 {
+		t.Errorf("Reiter Server: nurAdmin %v, Name %q, Stelle %d von %d (soll hinter Zustand stehen)", nurAdmin(reiterServer), reiterNamen[reiterServer], reiterServer, anzahlReiter)
 	}
 	// Klick auf den Reiter wirkt für ein Mitglied nicht.
 	a := ansicht{s: schnappschuss{verb: verbunden, z: beispielZustand(jetzt, false, true)}, reiter: reiterStart}

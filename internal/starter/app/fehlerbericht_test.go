@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
@@ -9,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Bazinga0o0/wanderwelt/internal/api"
 	"github.com/Bazinga0o0/wanderwelt/internal/starter/fehlerbericht"
 	"github.com/Bazinga0o0/wanderwelt/internal/starter/group"
 )
@@ -156,5 +158,28 @@ func TestRconPasswort(t *testing.T) {
 	}
 	if got := rconPasswort(filepath.Join(t.TempDir(), "gibtsnicht")); got != "" {
 		t.Errorf("%q", got)
+	}
+}
+
+// Der Zustand im Fehlerbericht enthält nur den Minecraft-Namen des Hosts:
+// keine E-Mail-Adresse (die Host-Struktur trägt sie, Fund im ersten Bericht).
+func TestBerichtZustandOhneEmailDesHosts(t *testing.T) {
+	a := busyApp(t, nil)
+	a.mu.Lock()
+	a.status = &api.Status{Host: &api.HostInfo{Email: "geheim.person@example.org", MinecraftName: "Steve_1", MachineID: "pc-xyz"}, Players: []string{"A", "B"}}
+	a.mu.Unlock()
+	z := a.berichtZustand()
+	data, err := json.Marshal(z)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(data)
+	for _, verboten := range []string{"geheim.person", "example.org", "@", "pc-xyz"} {
+		if strings.Contains(s, verboten) {
+			t.Errorf("Zustand enthält %q: %s", verboten, s)
+		}
+	}
+	if z.Status == nil || z.Status.HostName != "Steve_1" || z.Status.Spieler != 2 {
+		t.Errorf("Status: %+v", z.Status)
 	}
 }

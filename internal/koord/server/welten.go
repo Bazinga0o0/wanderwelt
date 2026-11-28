@@ -77,6 +77,7 @@ func (s *Server) worldList(running string) []api.GroupWorld {
 			ID: e.ID, Name: e.Name, Gamemode: e.Gamemode, Difficulty: e.Difficulty,
 			ChatOff: e.ChatOff, ChatMiB: e.ChatMiB,
 			HeadGeneration: n, HeadCreated: created, Empty: e.Empty(), Running: e.ID == running,
+			Karte: s.karteInfo(e.ID),
 		})
 	}
 	return out

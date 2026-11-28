@@ -63,3 +63,6 @@ func SetJobWait(d time.Duration) (restore func()) {
 	jobWait = d
 	return func() { jobWait = old }
 }
+
+// IDOf liefert die Mitglieds-Kennung der Adresse (nur Tests).
+func (s *Server) IDOf(email string) string { return s.id(email) }

@@ -367,8 +367,7 @@ func (a *App) pollStatus(refreshMe bool) {
 // ownPlayers liefert die Spieler aus status, wenn me selbst der Host ist
 // (der Status nennt keine MachineID, nur das Konto).
 func ownPlayers(status *api.Status, me *api.Me) []string {
-	if status == nil || status.Host == nil || me == nil || me.Email == "" ||
-		!strings.EqualFold(status.Host.Email, me.Email) {
+	if status == nil || !status.Host.IstIch(me) {
 		return nil
 	}
 	return status.Players

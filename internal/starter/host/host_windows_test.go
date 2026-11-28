@@ -3,6 +3,10 @@
 package host
 
 import (
+	"fmt"
+	"os"
+	"strings"
+	"syscall"
 	"testing"
 	"unsafe"
 
@@ -74,5 +78,38 @@ func checkOwnerOnly(t *testing.T, path string) {
 	}
 	if !gotUser || !gotSystem {
 		fail("Benutzer oder SYSTEM fehlt")
+	}
+}
+
+// konsolenHelfer (Helfermodus "konsole", nur Windows): meldet auf stdout, an
+// wie vielen Prozessen seine Konsole hängt (0: keine Konsole), und endet.
+func konsolenHelfer() {
+	var ids [8]uint32
+	n, _, _ := windows.NewLazySystemDLL("kernel32.dll").NewProc("GetConsoleProcessList").
+		Call(uintptr(unsafe.Pointer(&ids[0])), uintptr(len(ids)))
+	fmt.Printf("konsole=%d\n", n)
+	os.Exit(0)
+}
+
+// Der Tunnel bekommt wie der Server keine Konsole (DETACHED_PROCESS statt
+// CREATE_NO_WINDOW): Beim Herunterfahren baut Windows versteckte Konsolen
+// sofort ab und beendet damit alle Prozesse daran.
+func TestHiddenProcAttrOhneKonsole(t *testing.T) {
+	a := hiddenProcAttr()
+	if a.CreationFlags&detachedProcess == 0 || a.CreationFlags&syscall.CREATE_NEW_PROCESS_GROUP == 0 {
+		t.Errorf("DETACHED_PROCESS und CREATE_NEW_PROCESS_GROUP erwartet: %#x", a.CreationFlags)
+	}
+	if a.CreationFlags&0x08000000 != 0 { // CREATE_NO_WINDOW
+		t.Errorf("CREATE_NO_WINDOW darf nicht gesetzt sein: %#x", a.CreationFlags)
+	}
+	cmd := helperCmd(t.Context(), testExe(t))
+	cmd.Env = append(os.Environ(), helperEnv+"=konsole")
+	cmd.SysProcAttr = a
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(out)) != "konsole=0" {
+		t.Fatalf("Helfer meldet %q, erwartet konsole=0", out)
 	}
 }

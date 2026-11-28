@@ -16,9 +16,20 @@ import (
 // selbst angemeldet hat, mit Annehmen und Ablehnen (je mit Rückfrage).
 
 // anfrageAuftrag ist der Körper der Aktion „beitritt“.
+// ID ist die Kennung der Anfrage (bei einem älteren Koordinator die Adresse;
+// die Anzeige nennt sie nie).
 type anfrageAuftrag struct {
-	Email    string `json:"email"`
+	ID       string `json:"id"`
 	Annehmen bool   `json:"annehmen"`
+}
+
+// kennzeile ist die Kennung fürs Anzeigen (Rückfragen beim Serverbetreiber);
+// "–", wenn der Koordinator keine nennt. Eine E-Mail-Adresse steht nie da.
+func kennzeile(id string) string {
+	if id == "" || strings.Contains(id, "@") {
+		return "–"
+	}
+	return id
 }
 
 // anfragenZustand gehört zur mitgliederAnsicht.
@@ -52,7 +63,7 @@ func (z *anfragenZustand) sichtbar(alle []api.JoinRequestInfo) []api.JoinRequest
 	da := map[string]bool{}
 	var out []api.JoinRequestInfo
 	for _, r := range alle {
-		k := strings.ToLower(r.Email)
+		k := strings.ToLower(r.Key())
 		da[k] = true
 		if !z.erledigt[k] {
 			out = append(out, r)
@@ -72,8 +83,8 @@ func (z *anfragenZustand) klicks(gtx layout.Context, u *oberflaeche, rs []api.Jo
 		z.wartet = map[string]bool{}
 	}
 	for _, r := range rs {
-		key, r := strings.ToLower(r.Email), r
-		name := cmp.Or(r.MinecraftName, r.Email)
+		key, r := strings.ToLower(r.Key()), r
+		name := cmp.Or(r.MinecraftName, "ein neuer Spieler")
 		an, ab := z.klick(&z.annehmen, key).Clicked(gtx), z.klick(&z.ablehnen, key).Clicked(gtx)
 		if z.wartet[key] || (!an && !ab) {
 			continue
@@ -81,7 +92,7 @@ func (z *anfragenZustand) klicks(gtx layout.Context, u *oberflaeche, rs []api.Jo
 		annehmen := an
 		senden := func() {
 			z.wartet[key], z.fehler = true, ""
-			u.d.aktion("beitritt", anfrageAuftrag{Email: r.Email, Annehmen: annehmen}, func(err error) {
+			u.d.aktion("beitritt", anfrageAuftrag{ID: r.Key(), Annehmen: annehmen}, func(err error) {
 				delete(z.wartet, key)
 				if err != nil {
 					z.fehler = err.Error()
@@ -99,11 +110,11 @@ func (z *anfragenZustand) klicks(gtx layout.Context, u *oberflaeche, rs []api.Jo
 		}
 		if annehmen {
 			u.frage(rueckfrage{titel: "Anfrage annehmen?",
-				text: name + " (" + r.Email + ") wird Mitglied und kann mit der Welt spielen.",
+				text: name + " (Kennung " + kennzeile(r.ID) + ") wird Mitglied und kann mit der Welt spielen.",
 				ja:   "Annehmen", nein: "Zurück", beiJa: senden})
 		} else {
 			u.frage(rueckfrage{titel: "Anfrage ablehnen?",
-				text: name + " (" + r.Email + ") wird nicht aufgenommen. Wer abgelehnt wurde, kann sich später neu anmelden.",
+				text: name + " (Kennung " + kennzeile(r.ID) + ") wird nicht aufgenommen. Wer abgelehnt wurde, kann sich später neu anmelden.",
 				ja:   "Ablehnen", nein: "Zurück", gefahr: true, beiJa: senden})
 		}
 	}
@@ -115,7 +126,7 @@ func (z *anfragenZustand) karte(gtx layout.Context, u *oberflaeche, rs []api.Joi
 		return layout.Inset{Top: 12, Bottom: 10, Left: 16, Right: 16}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
 				layout.Flexed(1, t.klein("BEITRITTSANFRAGEN")),
-				layout.Flexed(1.4, t.klein("E-MAIL")),
+				layout.Flexed(1.4, t.klein("KENNUNG")),
 				feste(spalteAnfrage, t.klein("ANGEMELDET")),
 			)
 		})
@@ -124,7 +135,7 @@ func (z *anfragenZustand) karte(gtx layout.Context, u *oberflaeche, rs []api.Joi
 		return kartenZeileFarbe(gtx, t, t.f.flaeche2, true, false, kopf)
 	})}
 	for i, r := range rs {
-		key := strings.ToLower(r.Email)
+		key := strings.ToLower(r.Key())
 		frei := !z.wartet[key]
 		letzte := i == len(rs)-1
 		an, ab := z.klick(&z.annehmen, key), z.klick(&z.ablehnen, key)
@@ -139,7 +150,7 @@ func (z *anfragenZustand) karte(gtx layout.Context, u *oberflaeche, rs []api.Joi
 						}),
 						layout.Flexed(1.4, func(gtx layout.Context) layout.Dimensions {
 							return layout.Inset{Right: 8}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-								return t.text(gtx, schrift{groesse: 13.5, farbe: t.f.leise, zeilen: 1}, r.Email)
+								return t.text(gtx, schrift{groesse: 13.5, farbe: t.f.leise, zeilen: 1}, kennzeile(r.ID))
 							})
 						}),
 						feste(spalteAnfrage, func(gtx layout.Context) layout.Dimensions {

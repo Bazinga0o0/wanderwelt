@@ -18,3 +18,6 @@ func checkOwnerOnly(t *testing.T, path string) {
 		t.Fatalf("%s: Rechte %v, erwartet 0600", path, info.Mode().Perm())
 	}
 }
+
+// konsolenHelfer gibt es nur unter Windows.
+func konsolenHelfer() { os.Exit(0) }

@@ -119,7 +119,7 @@ func TestSameMachineUploadOnlyReleasesStaleLease(t *testing.T) {
 		api.HeartbeatRequest{LeaseID: first.resp.LeaseID, MachineID: "pc-a"}, nil); code != http.StatusConflict {
 		t.Fatalf("Lebenszeichen auf dem alten Zuschlag: %d, erwartet 409", code)
 	}
-	if st := getStatus(t, ts.URL, userB); st.Host == nil || st.Host.Email != emailA || !st.HostUploading {
+	if st := getStatus(t, ts.URL, userB); st.Host == nil || st.Host.Email != "" || st.Host.MinecraftName != "Alice" || !st.HostUploading {
 		t.Fatalf("Status nach UploadOnly desselben PCs: Host %+v, lädt hoch %v", st.Host, st.HostUploading)
 	}
 }
@@ -163,7 +163,7 @@ func TestUploadOnlyLeaseIsNotJoinable(t *testing.T) {
 		t.Fatalf("Lebenszeichen: %d", code)
 	}
 	st := getStatus(t, ts.URL, userB)
-	if st.Host == nil || st.Host.Email != emailA || st.HostReady || !st.HostUploading {
+	if st.Host == nil || st.Host.Email != "" || st.Host.MinecraftName != "Alice" || st.HostReady || !st.HostUploading {
 		t.Fatalf("Status bei Zuschlag nur zum Hochladen: Host %+v, bereit %v, lädt hoch %v", st.Host, st.HostReady, st.HostUploading)
 	}
 
@@ -174,7 +174,7 @@ func TestUploadOnlyLeaseIsNotJoinable(t *testing.T) {
 	if resp.Role != api.RoleDenied || resp.Reason != lease.ReasonUploading || resp.LeaseID != 0 {
 		t.Fatalf("Play von B während des Hochladens: %+v, erwartet denied (%q)", resp, lease.ReasonUploading)
 	}
-	if resp.Host == nil || resp.Host.Email != emailA || resp.Host.MachineID != "" {
+	if resp.Host == nil || resp.Host.Email != "" || resp.Host.MinecraftName != "Alice" || resp.Host.MachineID != "" {
 		t.Fatalf("Host in der Ablehnung: %+v", resp.Host)
 	}
 }
@@ -242,7 +242,7 @@ func TestHostReadyEndsWithoutHeartbeat(t *testing.T) {
 	if st.HostReady {
 		t.Fatalf("Status 25 s nach dem letzten Lebenszeichen: bereit, erwartet nicht mehr")
 	}
-	if st.Host == nil || st.Host.Email != emailA {
+	if st.Host == nil || st.Host.Email != "" || st.Host.MinecraftName != "Alice" {
 		t.Fatalf("Host 25 s nach dem letzten Lebenszeichen: %+v, erwartet weiter %s (Zuschlag gilt bis 90 s)", st.Host, emailA)
 	}
 }

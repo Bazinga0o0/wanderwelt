@@ -71,6 +71,42 @@ const (
 	DefaultEmptyTimeout = 10 * time.Minute
 )
 
+// Wiederholung des Zwischenstands: Ändert sich beim Bereitstellen eine Datei
+// der Welt (ErrChangedWhileCopying), läuft der ganze Ablauf (SaveBarrier,
+// Stage, release) bis zu snapTries-mal, mit snapRetryPause dazwischen (save-on
+// ist dann gesetzt), statt auf den nächsten Takt zu warten.
+const (
+	snapTries      = 3
+	snapRetryPause = 10 * time.Second
+)
+
+// Ruhe der Welt vor dem Bereitstellen (Variablen, damit Tests sie kürzen
+// können): Nach save-off und save-all flush muss die Welt eine Weile
+// unverändert sein (Größe und Änderungszeit aller Dateien, Prüfung alle
+// snapQuietPoll), höchstens snapQuietMax lang; erst ab snapQuietLog wird das
+// Warten im Log erwähnt. Wie lange die Ruhe sein muss, hängt von der Dauer des
+// Speicherns ab (snapQuietFor). Die Messung im Experiment: Mit C2ME dauerte ein
+// großes "save-all flush" 6–7 s, danach schrieb der Server noch gut 6 s weiter,
+// in Schüben mit Lücken von etwa 1 s und einer Anlaufzeit von 1 bis 8 s bis zur
+// ersten Änderung. Völlig sicher ist eine Ruhezeit deshalb nie; die
+// Wiederholungen (snapTries) fangen den Rest.
+var (
+	snapQuietMin  = time.Second
+	snapQuietCap  = 5 * time.Second
+	snapQuietPoll = 250 * time.Millisecond
+	snapQuietMax  = 20 * time.Second
+	snapQuietLog  = time.Second
+)
+
+// snapQuietFor ist die Ruhe, die nach einem Speichern von saveTook gefordert
+// wird: so lange wie das Speichern, mindestens snapQuietMin (Lücken zwischen
+// den Schüben), höchstens snapQuietCap. Ein schnelles Speichern (0,1 s) hat im
+// Experiment nie nachgeschrieben; ein langsames schrieb etwa so lange nach, wie
+// es selbst gedauert hatte.
+func snapQuietFor(saveTook time.Duration) time.Duration {
+	return min(max(saveTook, snapQuietMin), snapQuietCap)
+}
+
 // Namen im Server-Ordner.
 const (
 	// MarkerName: steht, solange der Server die Welt verändern kann.
@@ -581,17 +617,27 @@ type Session struct {
 	jobsCancel context.CancelFunc
 	jobsPaused atomic.Bool
 
-	nextSnap     time.Time
-	snapBusy     bool // Zwischenstand wird bereitgestellt oder hochgeladen
-	snapHolding  bool // Zwischenstand steht zwischen SaveBarrier und release
-	snapCancel   context.CancelCauseFunc
-	stopWaiting  bool               // Stop wartet auf release des Zwischenstands
-	stopCancel   context.CancelFunc // bricht den laufenden Stop ab (der Server wird dann hart beendet)
-	stopBy       time.Time          // Frist für den sauberen Stop nach dem Fencing (Null: keine)
-	stopLate     bool               // diese Frist ist abgelaufen
-	finalStarted bool
-	finalFirst   time.Time // erster Versuch des Schluss-Stands
-	finalRetryAt time.Time // nächster Versuch nach einem Fehlschlag (Null: keiner geplant)
+	nextSnap    time.Time
+	snapBusy    bool // Zwischenstand wird bereitgestellt oder hochgeladen
+	snapHolding bool // Zwischenstand steht zwischen SaveBarrier und release
+	snapCancel  context.CancelCauseFunc
+	// Wiederholung des Zwischenstands nach einer Änderung beim Kopieren:
+	// snapTry ist der Versuch (1…snapTries), der zuletzt lief; snapRetryAt der
+	// Zeitpunkt des nächsten (Null: keiner geplant), snapRetryFile die Datei,
+	// die sich geändert hatte. snapChanges und snapGaveUp zählen in dieser
+	// Sitzung die Änderungen und die Stände, die nach allen Versuchen fehlten.
+	snapTry       int
+	snapRetryAt   time.Time
+	snapRetryFile string
+	snapChanges   int
+	snapGaveUp    int
+	stopWaiting   bool               // Stop wartet auf release des Zwischenstands
+	stopCancel    context.CancelFunc // bricht den laufenden Stop ab (der Server wird dann hart beendet)
+	stopBy        time.Time          // Frist für den sauberen Stop nach dem Fencing (Null: keine)
+	stopLate      bool               // diese Frist ist abgelaufen
+	finalStarted  bool
+	finalFirst    time.Time // erster Versuch des Schluss-Stands
+	finalRetryAt  time.Time // nächster Versuch nach einem Fehlschlag (Null: keiner geplant)
 	// snapEvery: Abstand der Zwischenstände (aus den Host-Einstellungen).
 	snapEvery time.Duration
 	// stopBegan, finalStop: Beginn und Dauer von Stop (Wanduhr), Messwerte
@@ -963,6 +1009,18 @@ func (s *Session) step(now time.Time) {
 	if !s.plBusy && !now.Before(s.nextPlayers) {
 		s.queryPlayers(now)
 	}
+	if !s.snapRetryAt.IsZero() && !now.Before(s.snapRetryAt) {
+		s.snapRetryAt = time.Time{}
+		switch {
+		case s.ho != nil || s.hoPending:
+			log.Printf("host: Zwischenstand: Wiederholung entfällt, der Stand der Übergabe ersetzt ihn")
+		case s.snapBusy:
+			// Der Takt hat schon einen neuen Zwischenstand begonnen.
+		default:
+			log.Printf("host: Zwischenstand: Versuch %d/%d nach Änderung an %s", s.snapTry+1, snapTries, s.snapRetryFile)
+			s.startSnapshot(s.snapTry + 1)
+		}
+	}
 	if !now.Before(s.nextSnap) {
 		for !s.nextSnap.After(now) {
 			s.nextSnap = s.nextSnap.Add(s.snapEvery)
@@ -978,7 +1036,7 @@ func (s *Session) step(now time.Time) {
 			// Leere Stände verdrängten sonst ältere aus der Aufbewahrung.
 			log.Printf("host: Dauerbetrieb – seit dem letzten Stand war niemand online, Zwischenstand übersprungen")
 		default:
-			s.startSnapshot()
+			s.startSnapshot(1)
 		}
 	}
 	for _, t := range s.tunnels {
@@ -1023,6 +1081,7 @@ func (s *Session) nextWake() time.Time {
 			add(s.nextPlayers)
 		}
 		add(s.nextSnap)
+		add(s.snapRetryAt)
 		for _, t := range s.tunnels {
 			add(t.at)
 		}
@@ -1971,8 +2030,11 @@ func (s *Session) base() baseRef {
 	return baseRef{world: s.baseWorld, gen: s.baseGen, uncertain: s.baseUncertain}
 }
 
-func (s *Session) startSnapshot() {
+// startSnapshot beginnt den Zwischenstand; try ist der Versuch (1: Takt, 2 und
+// 3: Wiederholung nach einer Änderung beim Kopieren, siehe snapChangedWhileCopying).
+func (s *Session) startSnapshot(try int) {
 	s.snapBusy, s.snapHolding = true, true
+	s.snapTry, s.snapRetryAt = try, time.Time{}
 	// Wer jetzt online ist, spielt nach diesem Stand weiter.
 	s.played = len(s.players) > 0
 	players := s.takeSeen()
@@ -2041,7 +2103,12 @@ func (s *Session) snapshotOp(ctx context.Context, b baseRef, players []string) u
 	}
 	saveTook := time.Since(t)
 	t = time.Now()
-	stageErr := s.restage(ctx)
+	// Erst die Welt zur Ruhe kommen lassen: Mit C2ME schreibt der Server nach
+	// "Saved the game" noch Sekunden weiter (siehe snapQuietFor).
+	stageErr := s.snapQuiet(ctx, saveTook)
+	if stageErr == nil {
+		stageErr = s.restage(ctx)
+	}
 	stageTook := time.Since(t)
 	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), saveOnTimeout)
 	if err := release(rctx); err != nil {
@@ -2060,6 +2127,28 @@ func (s *Session) snapshotOp(ctx context.Context, b baseRef, players []string) u
 	r := s.uploadStaged(s.work, b, players)
 	r.stats.save, r.stats.stage, r.stats.total = saveTook, stageTook, time.Since(began)
 	return r
+}
+
+// snapQuiet wartet nach SaveBarrier (Dauer saveTook), bis die Dateien der Welt
+// snapQuietFor(saveTook) lang unverändert sind (höchstens snapQuietMax): Mit
+// C2ME schreibt der Server nach "Saved the game" noch Sekunden weiter, und
+// Stage würde sonst an einer Änderung scheitern. Das ist nur eine Milderung,
+// keine Prüfung: Läuft die Zeit ab oder lässt sich die Welt nicht prüfen, geht
+// es weiter, und Stage erkennt jede Änderung selbst. Fehler nur, wenn ctx
+// endet.
+func (s *Session) snapQuiet(ctx context.Context, saveTook time.Duration) error {
+	quiet, waited, err := s.waitStable(ctx, snapQuietFor(saveTook), snapQuietPoll, snapQuietMax)
+	switch {
+	case ctx.Err() != nil:
+		return context.Cause(ctx)
+	case err != nil:
+		log.Printf("host: Zwischenstand: Welt nicht prüfbar, es wird sofort kopiert: %v", err)
+	case !quiet:
+		log.Printf("host: Zwischenstand: Welt in %v nicht ruhig, es wird trotzdem kopiert", snapQuietMax)
+	case waited >= snapQuietLog:
+		log.Printf("host: Zwischenstand: Welt nach %s ruhig", seconds(waited))
+	}
+	return nil
 }
 
 // onSnapReleased: Der Zwischenstand hat release hinter sich; ein wartender
@@ -2212,6 +2301,9 @@ func (s *Session) onUploaded(r uploadResult, final bool) {
 		saveErr := s.setBase(r.gen.WorldID, r.gen.Number, final || s.phase == phHosting)
 		s.noteCommitted(r.gen, false)
 		log.Printf("host: Stand %s/%d eingereicht", r.gen.WorldID, r.gen.Number)
+		if !final && s.snapTry > 1 {
+			log.Printf("host: Zwischenstand: Versuch %d/%d gelungen", s.snapTry, snapTries)
+		}
 		logStats(r.gen.Number, final, r.stats)
 		if final {
 			s.release = true
@@ -2247,6 +2339,15 @@ func (s *Session) onUploaded(r uploadResult, final bool) {
 		if r.uncertain {
 			s.baseUncertain = true
 		}
+		if !final && errors.Is(r.err, worldsync.ErrChangedWhileCopying) && s.snapChangedWhileCopying(r.err) {
+			// Neuer Versuch in snapRetryPause; was seit dem vorigen Stand
+			// gespielt wurde, bleibt vorgemerkt.
+			s.played = true
+			for _, n := range r.players {
+				s.seen[n] = true
+			}
+			break
+		}
 		log.Printf("host: Stand nicht eingereicht: %v", r.err)
 		if !final {
 			// Was seit dem vorigen Stand gespielt wurde, ist noch nicht
@@ -2275,6 +2376,47 @@ func (s *Session) onUploaded(r uploadResult, final bool) {
 		s.phase = phDone
 	}
 	s.maybeStartFinal()
+}
+
+// snapChangedWhileCopying wertet den Fehler eines Zwischenstands aus, bei dem
+// sich eine Datei der Welt während des Kopierens geändert hat (der Server
+// schrieb trotz save-off): Es zählt die Änderung und plant, solange der
+// Zwischenstand noch aktiv ist und Versuche übrig sind (snapTries), den
+// ganzen Ablauf (SaveBarrier, Stage, release) in snapRetryPause neu und
+// meldet true. Sonst (letzter Versuch, Ende, Fencing, Übergabe) meldet es
+// false, und es bleibt beim bisherigen Verhalten: kein Stand, nächster Takt.
+func (s *Session) snapChangedWhileCopying(err error) bool {
+	file := "?"
+	if ce, ok := errors.AsType[*worldsync.ChangedWhileCopyingError](err); ok {
+		file = s.worldRel(ce.Path)
+	}
+	s.snapChanges++
+	if s.snapTry < snapTries && s.active() && s.ho == nil && !s.hoPending {
+		s.snapRetryAt = s.clk.Now().Add(snapRetryPause)
+		s.snapRetryFile = file
+		log.Printf("host: Zwischenstand: Änderung an %s beim Kopieren (Versuch %d/%d, %d. Änderung in dieser Sitzung), neuer Versuch in %v",
+			file, s.snapTry, snapTries, s.snapChanges, snapRetryPause)
+		return true
+	}
+	if s.snapTry >= snapTries {
+		s.snapGaveUp++
+		log.Printf("host: Zwischenstand nach %d Versuchen nicht möglich: Änderung an %s (%d Änderungen, %d Stände ohne Versuche in dieser Sitzung): %v",
+			snapTries, file, s.snapChanges, s.snapGaveUp, err)
+	}
+	return false
+}
+
+// worldRel kürzt den Pfad einer Datei der Welt auf den Teil unterhalb des
+// Weltordners (mit "/") fürs Log.
+func (s *Session) worldRel(p string) string {
+	w, err1 := filepath.Abs(s.world)
+	a, err2 := filepath.Abs(p)
+	if err1 == nil && err2 == nil {
+		if rel, err := filepath.Rel(w, a); err == nil && !strings.HasPrefix(rel, "..") {
+			return filepath.ToSlash(rel)
+		}
+	}
+	return filepath.ToSlash(p)
 }
 
 // setBase setzt die Basis und schreibt sie in den Zustand; clearPending:
@@ -2355,6 +2497,7 @@ func (s *Session) fence(cause error) {
 // beendet, die Wartezeit also begrenzt).
 func (s *Session) beginStop() {
 	s.phase = phStopping
+	s.snapRetryAt = time.Time{} // Ende, Fencing, Stop: keine Wiederholung mehr
 	s.exited = nil
 	s.players, s.emptySince = []string{}, time.Time{}
 	if s.snapHolding {

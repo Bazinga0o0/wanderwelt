@@ -125,6 +125,34 @@ type GroupWorld struct {
 	HeadCreated    time.Time `json:"head_created,omitzero"`
 	Empty          bool      `json:"empty,omitempty"`
 	Running        bool      `json:"running,omitempty"`
+	// Karte: Stand der Karte dieser Welt (nur Oberwelt, Karten-Reiter des
+	// Starters); nil, solange es keine gibt (oder bei einem älteren
+	// Koordinator). Ältere Starter ignorieren das Feld.
+	Karte *KarteInfo `json:"karte,omitempty"`
+}
+
+// KarteInfo beschreibt den ausgelieferten Kartenstand einer Welt
+// (GET /v1/karte/{welt}/manifest.json hat die Einzelheiten): Version ist das
+// format des Manifests, Source die Kennung des gerenderten Stands
+// („<Weltkennung>/<Generation>“), Generated die Zeit des Laufs, Tiles die
+// Zahl der Kacheln, Levels die Stufen. Bounds: Kachelgrenzen der Stufe 0
+// (Kachel x/y wie im Manifest).
+type KarteInfo struct {
+	Version   int          `json:"version"`
+	Source    string       `json:"source"`
+	Generated time.Time    `json:"generated"`
+	Tiles     int          `json:"tiles"`
+	Levels    []int        `json:"levels"`
+	Bounds    *KarteBounds `json:"bounds,omitempty"`
+}
+
+// KarteBounds sind die Grenzen der vorhandenen Kacheln einer Stufe (beide
+// Enden eingeschlossen), wie im Manifest.
+type KarteBounds struct {
+	XMin int `json:"x_min"`
+	XMax int `json:"x_max"`
+	YMin int `json:"y_min"`
+	YMax int `json:"y_max"`
 }
 
 // WorldList ist die Antwort auf GET /v1/worlds: die Welten in der
@@ -158,8 +186,15 @@ type WorldPatch struct {
 }
 
 // HostInfo beschreibt den aktuellen Host.
+//
+// Datenschutz: Email steht nur in der Antwort an die Person, der sie gehört
+// (also nur, wenn der Anfragende selbst der Host ist), sonst fehlt sie. ID ist
+// die pseudonyme Kennung des Mitglieds (siehe internal/koord/kennung): stabil,
+// nicht umkehrbar, für alle sichtbar; ältere Koordinatoren kennen sie nicht.
+// „Bin ich es?“ beantwortet HostInfo.IstIch.
 type HostInfo struct {
-	Email         string `json:"email"`
+	Email         string `json:"email,omitempty"`
+	ID            string `json:"id,omitempty"`
 	MinecraftName string `json:"minecraft_name"`
 	MachineID     string `json:"machine_id"`
 }
@@ -339,6 +374,21 @@ type HealthPrune struct {
 	Bytes       int64     `json:"bytes,omitempty"`
 }
 
+// HealthKarte: Zustand der Kartenerzeugung. Enabled: die Erzeugung ist an
+// (karte.binary gesetzt und vorhanden); LastRun und LastDurationMs: der letzte
+// erfolgreiche Lauf; SizeBytes und Tiles: Größe und Zahl der Kacheln aller
+// Welten; Error: der letzte Fehler (ohne Geheimnisse), ErrorTime: wann.
+type HealthKarte struct {
+	Enabled        bool      `json:"enabled"`
+	Running        bool      `json:"running,omitempty"`
+	LastRun        time.Time `json:"last_run,omitzero"`
+	LastDurationMs int64     `json:"last_duration_ms,omitempty"`
+	SizeBytes      int64     `json:"size_bytes"`
+	Tiles          int       `json:"tiles"`
+	Error          string    `json:"error,omitempty"`
+	ErrorTime      time.Time `json:"error_time,omitzero"`
+}
+
 // Health ist die Antwort auf GET /v1/health (nur Admins): was ein Admin
 // sonst im Log des Servers nachsieht.
 type Health struct {
@@ -368,15 +418,19 @@ type Health struct {
 	Maintenance  *Maintenance    `json:"maintenance,omitempty"`
 	Backup       HealthBackup    `json:"backup"`
 	Prune        *HealthPrune    `json:"prune,omitempty"`
+	// Karte: der Karten-Dienst (nil, solange nichts eingerichtet oder erzeugt ist).
+	Karte *HealthKarte `json:"karte,omitempty"`
 	// ManifestStarter: Starter-Version im Manifest ("" ohne).
 	ManifestStarter string          `json:"manifest_starter,omitempty"`
 	Status          string          `json:"status"` // HealthOK | HealthWarnung | HealthFehler
 	Warnings        []HealthWarning `json:"warnings"`
 }
 
-// Me beschreibt das anfragende Mitglied.
+// Me beschreibt das anfragende Mitglied (die eigene E-Mail-Adresse und die
+// eigene Kennung; ID fehlt bei älteren Koordinatoren).
 type Me struct {
 	Email            string `json:"email"`
+	ID               string `json:"id,omitempty"`
 	MinecraftName    string `json:"minecraft_name"`
 	Admin            bool   `json:"admin"`
 	Op               bool   `json:"op"`
@@ -445,11 +499,15 @@ type Segment struct {
 
 // Generation ist ein angenommener Stand der Welt.
 type Generation struct {
-	Number           int64       `json:"number"`
-	Parent           int64       `json:"parent"`
-	WorldID          string      `json:"world_id"`
-	Created          time.Time   `json:"created"`
-	HostEmail        string      `json:"host_email"`
+	Number  int64     `json:"number"`
+	Parent  int64     `json:"parent"`
+	WorldID string    `json:"world_id"`
+	Created time.Time `json:"created"`
+	// HostEmail: die E-Mail-Adresse des Hosts, nur in der Antwort an ihn
+	// selbst (sonst leer); HostID: seine pseudonyme Kennung (nur in Antworten
+	// des Koordinators, nie in der gespeicherten Datei).
+	HostEmail        string      `json:"host_email,omitempty"`
+	HostID           string      `json:"host_id,omitempty"`
 	MachineID        string      `json:"machine_id"`
 	LeaseID          int64       `json:"lease_id"`
 	MinecraftVersion string      `json:"minecraft_version"`
@@ -670,8 +728,15 @@ type HeartbeatResponse struct {
 }
 
 // MemberInfo ist ein Mitglied in der Mitgliederliste (nur für Admins).
+//
+// Datenschutz: Auch Admins sehen die E-Mail-Adresse anderer nicht. ID ist die
+// pseudonyme Kennung (Schlüssel für Rollen und Namen ändern). Email enthält
+// nur in der eigenen Zeile die echte Adresse; in fremden Zeilen steht dort die
+// Kennung (kein „@“), damit ältere Starter, die „email“ als Schlüssel in den
+// Pfad setzen, weiter funktionieren. Neue Starter nehmen Key().
 type MemberInfo struct {
-	Email         string `json:"email"`
+	Email         string `json:"email,omitempty"`
+	ID            string `json:"id,omitempty"`
 	MinecraftName string `json:"minecraft_name"`
 	Admin         bool   `json:"admin"`
 	Op            bool   `json:"op"`
@@ -802,8 +867,13 @@ type JoinStatus struct {
 // nur Admins, älteste zuerst). Annehmen und Ablehnen:
 // POST /v1/join-requests/{email}/accept bzw. /decline (Antwort 204; 404 keine
 // offene Anfrage dieses Kontos, 409 der Name ist inzwischen vergeben).
+//
+// Datenschutz wie MemberInfo: ID ist die Kennung; Email trägt bei fremden
+// Konten dieselbe Kennung (nie die Adresse), nur für ältere Starter. An der
+// Stelle {email} der Pfade gilt auch die Kennung.
 type JoinRequestInfo struct {
-	Email         string    `json:"email"`
+	Email         string    `json:"email,omitempty"`
+	ID            string    `json:"id,omitempty"`
 	MinecraftName string    `json:"minecraft_name"`
 	Requested     time.Time `json:"requested"`
 }

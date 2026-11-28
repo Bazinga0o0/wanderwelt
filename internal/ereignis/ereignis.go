@@ -224,12 +224,10 @@ func name(h *api.HostInfo) string {
 	return h.MinecraftName
 }
 
-func schluessel(h *api.HostInfo) string {
-	if h == nil {
-		return ""
-	}
-	return strings.ToLower(h.Email)
-}
+// schluessel ist der Vergleichswert eines Hosts: die pseudonyme Kennung, bei
+// älteren Koordinatoren die E-Mail-Adresse (klein). Fremde Adressen sendet der
+// Koordinator nicht mehr (Datenschutz).
+func schluessel(h *api.HostInfo) string { return h.Schluessel() }
 
 // laufendeWelt ist der Name der laufenden Welt, aber nur, wenn die Gruppe
 // mehrere hat (sonst ist er nichtssagend).

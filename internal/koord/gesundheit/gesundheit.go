@@ -73,6 +73,10 @@ type Eingabe struct {
 	// UeberBudget: der Speicher liegt trotz Aufräumen über dem Budget.
 	AufraeumenFehler string
 	UeberBudget      bool
+
+	// KarteFehler: der letzte Lauf der Kartenerzeugung scheiterte (Text, ""
+	// sonst).
+	KarteFehler string
 }
 
 // Warnungen berechnet die Warnungen, nach Stufe sortiert (Fehler zuerst),
@@ -98,6 +102,10 @@ func Warnungen(in Eingabe) []api.HealthWarning {
 	}
 	if in.AufraeumenFehler != "" {
 		add(api.WarnFehler, "Das letzte Aufräumen des Speichers ist fehlgeschlagen: %s", in.AufraeumenFehler)
+	}
+
+	if in.KarteFehler != "" {
+		add(api.WarnWarnung, "Die Karte konnte zuletzt nicht erzeugt werden (die bisherige wird weiter ausgeliefert): %s", in.KarteFehler)
 	}
 
 	// Sicherung.

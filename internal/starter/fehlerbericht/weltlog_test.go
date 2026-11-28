@@ -43,6 +43,11 @@ func TestWanderweltZeileFilter(t *testing.T) {
 	ja := []string{
 		"host: Stand w1/12 eingereicht",
 		"host: Zwischenstand alle 5m0s, Ende nach 10m0s ohne Spieler",
+		"host: Zwischenstand: Änderung an region/r.-2.-5.mca beim Kopieren (Versuch 1/3, 1. Änderung in dieser Sitzung), neuer Versuch in 5s",
+		"host: Zwischenstand: Versuch 2/3 nach Änderung an level.dat",
+		"host: Zwischenstand nach 3 Versuchen nicht möglich: Änderung an level.dat",
+		"winsys: Windows-Sitzung soll enden (lParam 0x0), Herunterfahren wird aufgehalten, bis der Schluss-Stand hochgeladen ist",
+		"winsys: Hosten beendet, Herunterfahren wird freigegeben",
 		"mcserver: Server gestartet (PID 4242) in C:\\x",
 		"mcserver: Server sauber gestoppt",
 		"worldsync: Datei geändert",

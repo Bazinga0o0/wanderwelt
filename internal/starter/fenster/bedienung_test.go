@@ -287,13 +287,13 @@ func TestGespeichertBleibt(t *testing.T) {
 	b.r.ClickFocus()
 	b.bild()
 	got = b.warte(2)
-	if len(got) != 2 || got[1] != `rolle {"email":"jonas.berger@example.de","admin":true,"op":false}` {
+	if len(got) != 2 || got[1] != `rolle {"id":"9d3b71c8a05e24f6","admin":true,"op":false}` {
 		t.Fatalf("rolle: %q", got)
 	}
 	for range 3 {
 		b.bild() // Liste zeigt Jonas noch ohne Admin
 	}
-	if !b.u.mitgl.admin["jonas.berger@example.de"].Value {
+	if !b.u.mitgl.admin["9d3b71c8a05e24f6"].Value {
 		t.Fatal("Admin-Schalter sprang zurück")
 	}
 }
@@ -403,28 +403,28 @@ func TestBeitrittsanfragenBedienung(t *testing.T) {
 	b.u.rf.beiJa()
 	b.u.rf = nil
 	got := b.warte(1)
-	if len(got) != 1 || got[0] != `beitritt {"email":"tim@example.de","annehmen":true}` {
+	if len(got) != 1 || got[0] != `beitritt {"id":"5e0a93d7b1c46f28","annehmen":true}` {
 		t.Fatalf("Aktionen: %q", got)
 	}
 	b.bild()
-	if sicht := b.u.mitgl.anfr.sichtbar(s.anfragen); len(sicht) != 1 || sicht[0].Email == "tim@example.de" {
+	if sicht := b.u.mitgl.anfr.sichtbar(s.anfragen); len(sicht) != 1 || sicht[0].ID == "5e0a93d7b1c46f28" {
 		t.Fatalf("bearbeitete Anfrage noch sichtbar: %+v", sicht)
 	}
 	// Die Liste ohne sie: Merker wird aufgeräumt.
 	b.u.mitgl.anfr.sichtbar(s.anfragen[1:])
-	if b.u.mitgl.anfr.erledigt["tim@example.de"] {
+	if b.u.mitgl.anfr.erledigt["5e0a93d7b1c46f28"] {
 		t.Error("Merker bleibt, obwohl die Anfrage aus der Liste verschwand")
 	}
 
 	// Ablehnen: Rückfrage mit Warnfarbe, Aktion mit annehmen=false.
-	b.u.mitgl.anfr.klick(&b.u.mitgl.anfr.ablehnen, "tim@example.de").Click()
+	b.u.mitgl.anfr.klick(&b.u.mitgl.anfr.ablehnen, "5e0a93d7b1c46f28").Click()
 	b.bild()
 	if b.u.rf == nil || !b.u.rf.gefahr || b.u.rf.ja != "Ablehnen" {
 		t.Fatalf("keine Rückfrage zum Ablehnen: %+v", b.u.rf)
 	}
 	b.u.rf.beiJa()
 	got = b.warte(2)
-	if len(got) != 2 || got[1] != `beitritt {"email":"tim@example.de","annehmen":false}` {
+	if len(got) != 2 || got[1] != `beitritt {"id":"5e0a93d7b1c46f28","annehmen":false}` {
 		t.Fatalf("Aktionen: %q", got)
 	}
 }

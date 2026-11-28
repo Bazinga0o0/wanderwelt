@@ -111,6 +111,17 @@ var ErrDownloadIncomplete = errors.New("Download im Weltordner nicht abgeschloss
 // erneutem Speichern kann gelingen.
 var ErrChangedWhileCopying = errors.New("Datei hat sich beim Kopieren geändert")
 
+// ChangedWhileCopyingError ist der Fehler von Stage, wenn sich eine Datei der
+// Welt während des Kopierens geändert hat: Path ist ihr Pfad in der Welt. Er
+// ist ein ErrChangedWhileCopying (errors.Is); errors.As liefert die Datei.
+type ChangedWhileCopyingError struct{ Path string }
+
+func (e *ChangedWhileCopyingError) Error() string {
+	return e.Path + " hat sich beim Kopieren geändert (Stage nur zwischen SaveBarrier und release)"
+}
+
+func (e *ChangedWhileCopyingError) Is(target error) bool { return target == ErrChangedWhileCopying }
+
 // chtimes setzt die Änderungszeit einer bereitgestellten Datei (in Tests
 // ersetzbar, um ein Dateisystem mit groben Zeiten nachzustellen).
 var chtimes = os.Chtimes
@@ -412,6 +423,35 @@ func StageCachedContext(ctx context.Context, worldDir, stagingDir string, hc *Ha
 			hc.put(dst, cur, e)
 		}
 	}
+	return verifyUnchanged(ctx, world, files)
+}
+
+// verifyUnchanged prüft zum Schluss von Stage, dass sich nichts in der Welt
+// seit dem Einlesen (scanWorld) geändert hat: weder eine Datei, die schon
+// kopiert war oder gar nicht kopiert werden musste (stageFile prüft nur die
+// eigene Datei während ihres Kopierens), noch dass Dateien dazugekommen oder
+// weggefallen sind. Sonst wäre der Stand aus verschiedenen Zeitpunkten
+// gemischt. Ändert sich etwas, ist das ein ChangedWhileCopyingError mit der
+// ersten betroffenen Datei (sortiert).
+func verifyUnchanged(ctx context.Context, world string, files map[string]fs.FileInfo) error {
+	if ctx.Err() != nil {
+		return context.Cause(ctx)
+	}
+	now, _, err := scanWorld(world)
+	if err != nil {
+		return fmt.Errorf("Welt nach dem Kopieren prüfen: %w", err)
+	}
+	for _, rel := range slices.Sorted(maps.Keys(files)) {
+		cur, ok := now[rel]
+		if !ok || !sameState(cur, files[rel]) {
+			return &ChangedWhileCopyingError{Path: filepath.Join(world, filepath.FromSlash(rel))}
+		}
+	}
+	for _, rel := range slices.Sorted(maps.Keys(now)) {
+		if _, ok := files[rel]; !ok {
+			return &ChangedWhileCopyingError{Path: filepath.Join(world, filepath.FromSlash(rel))}
+		}
+	}
 	return nil
 }
 
@@ -494,7 +534,7 @@ func stageFile(src, dst string, before fs.FileInfo) error {
 		return err
 	}
 	if n != before.Size() || !sameState(before, after) {
-		return fmt.Errorf("%s hat sich beim Kopieren geändert (Stage nur zwischen SaveBarrier und release): %w", src, ErrChangedWhileCopying)
+		return &ChangedWhileCopyingError{Path: src}
 	}
 	if err := out.Sync(); err != nil {
 		return err

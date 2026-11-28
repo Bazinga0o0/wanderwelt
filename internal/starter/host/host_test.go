@@ -65,6 +65,8 @@ func TestMain(m *testing.M) {
 	case "sleep":
 		time.Sleep(2 * time.Minute)
 		os.Exit(0)
+	case "konsole":
+		konsolenHelfer()
 	case "stdin":
 		go func() {
 			time.Sleep(2 * time.Minute)
@@ -73,6 +75,9 @@ func TestMain(m *testing.M) {
 		io.Copy(io.Discard, os.Stdin)
 		os.Exit(0)
 	}
+	// Die Ruhe der Welt vor dem Bereitstellen (echte Zeit) kurz halten; die
+	// Prüfung der Ruhe selbst steht in snapretry_test.go.
+	snapQuietMin, snapQuietCap, snapQuietPoll, snapQuietMax, snapQuietLog = 2*time.Millisecond, 2*time.Millisecond, time.Millisecond, 50*time.Millisecond, time.Hour
 	os.Exit(m.Run())
 }
 

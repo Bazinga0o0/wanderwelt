@@ -229,9 +229,10 @@ func (s *Server) handleMembers(w http.ResponseWriter, r *http.Request) {
 	}
 	online := s.onlineNames()
 	list := s.memberList()
+	viewer := identityOf(r).member.Email
 	out := make([]api.MemberInfo, 0, len(list))
 	for _, m := range list {
-		out = append(out, memberInfo(m, online))
+		out = append(out, s.memberInfo(m, online, viewer))
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -245,9 +246,18 @@ func (s *Server) onlineNames() map[string]bool {
 	return set
 }
 
-func memberInfo(m config.Member, online map[string]bool) api.MemberInfo {
+// memberInfo beschreibt m für den Anfragenden viewer (E-Mail): die echte
+// Adresse nur in der eigenen Zeile, sonst die Kennung (auch in Email, siehe
+// api.MemberInfo; ältere Starter nehmen dieses Feld als Schlüssel).
+func (s *Server) memberInfo(m config.Member, online map[string]bool, viewer string) api.MemberInfo {
+	id := s.id(m.Email)
+	email := id
+	if eigenerKonto(m.Email, viewer) {
+		email = m.Email
+	}
 	return api.MemberInfo{
-		Email:         m.Email,
+		Email:         email,
+		ID:            id,
 		MinecraftName: m.Minecraft,
 		Admin:         m.Admin,
 		Op:            m.Op,
@@ -266,12 +276,17 @@ func (s *Server) handleSetRole(w http.ResponseWriter, r *http.Request) {
 	if !s.decode(w, r, maxJSONBody, &req) {
 		return
 	}
-	m, err := s.setRole(r.PathValue("email"), req, admin.Email)
+	key := r.PathValue("email")
+	if !pfadSchluessel(key, admin.Email) {
+		writeError(w, http.StatusNotFound, "kein Mitglied mit dieser Kennung")
+		return
+	}
+	m, err := s.setRole(key, req, admin.Email)
 	if err != nil {
 		s.changeError(w, "Rolle speichern", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, memberInfo(m, s.onlineNames()))
+	writeJSON(w, http.StatusOK, s.memberInfo(m, s.onlineNames(), admin.Email))
 }
 
 // setRole setzt die Rollen des Mitglieds email in roles.json. 404 kein
@@ -280,9 +295,9 @@ func (s *Server) handleSetRole(w http.ResponseWriter, r *http.Request) {
 func (s *Server) setRole(email string, req api.RoleRequest, by string) (config.Member, error) {
 	s.overlayMu.Lock()
 	defer s.overlayMu.Unlock()
-	i := indexMember(s.cfgMembers, email)
+	i := s.indexKey(s.cfgMembers, email)
 	if i < 0 {
-		return config.Member{}, &httpError{http.StatusNotFound, "kein Mitglied " + email}
+		return config.Member{}, &httpError{http.StatusNotFound, "kein Mitglied mit dieser Kennung"}
 	}
 	cm := s.cfgMembers[i]
 	key := strings.ToLower(cm.Email)
@@ -297,7 +312,7 @@ func (s *Server) setRole(email string, req api.RoleRequest, by string) (config.M
 	after := effectiveMembers(s.cfgMembers, s.names, roles)
 	if !slices.ContainsFunc(after, func(m config.Member) bool { return m.Admin }) {
 		return config.Member{}, &httpError{http.StatusConflict, fmt.Sprintf(
-			"%s ist der einzige Admin – erst einem anderen Mitglied das Admin-Recht geben", cm.Email)}
+			"%s ist der einzige Admin – erst einem anderen Mitglied das Admin-Recht geben", s.who(cm))}
 	}
 	if maps.Equal(roles, s.roles) {
 		return after[i], nil
@@ -356,12 +371,17 @@ func (s *Server) handleSetMemberMinecraft(w http.ResponseWriter, r *http.Request
 	if !s.decode(w, r, maxJSONBody, &req) {
 		return
 	}
-	m, err := s.setMinecraft(r.Context(), r.PathValue("email"), req.MinecraftName, admin.Email)
+	key := r.PathValue("email")
+	if !pfadSchluessel(key, admin.Email) {
+		writeError(w, http.StatusNotFound, "kein Mitglied mit dieser Kennung")
+		return
+	}
+	m, err := s.setMinecraft(r.Context(), key, req.MinecraftName, admin.Email)
 	if err != nil {
 		s.changeError(w, "Minecraft-Name speichern", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, memberInfo(m, s.onlineNames()))
+	writeJSON(w, http.StatusOK, s.memberInfo(m, s.onlineNames(), admin.Email))
 }
 
 // setMinecraft setzt den Minecraft-Namen des Mitglieds email in names.json:
@@ -427,9 +447,9 @@ func (s *Server) setMinecraft(ctx context.Context, email, name, admin string) (c
 // checkMinecraftLocked prüft, ob name der Minecraft-Name des Mitglieds
 // email werden darf, und liefert dessen Index. Aufruf unter overlayMu.
 func (s *Server) checkMinecraftLocked(email, name string, self bool) (int, error) {
-	i := indexMember(s.cfgMembers, email)
+	i := s.indexKey(s.cfgMembers, email)
 	if i < 0 {
-		return -1, &httpError{http.StatusNotFound, "kein Mitglied " + email}
+		return -1, &httpError{http.StatusNotFound, "kein Mitglied mit dieser Kennung"}
 	}
 	eff := s.memberList() // gleiche Reihenfolge wie cfgMembers
 	if self && eff[i].Minecraft != "" {
@@ -453,6 +473,7 @@ func (s *Server) checkMinecraftLocked(email, name string, self bool) (int, error
 func (s *Server) meOf(m config.Member) api.Me {
 	me := api.Me{
 		Email:            m.Email,
+		ID:               s.id(m.Email),
 		MinecraftName:    m.Minecraft,
 		Admin:            m.Admin,
 		Op:               m.Op,

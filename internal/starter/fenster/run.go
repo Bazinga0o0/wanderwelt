@@ -102,6 +102,8 @@ func Run(ctx context.Context, exe, version string) error {
 	}
 	d.minimiert = func() bool { return winsys.Minimized(hwnd.Load()) }
 	u := neueOberflaeche(th, d)
+	u.karte.wurzel = ctx
+	defer u.beenden() // Karte: Abrufe abbrechen, Goroutinen abwarten
 	go d.lauf(ctx)
 
 	var ops op.Ops

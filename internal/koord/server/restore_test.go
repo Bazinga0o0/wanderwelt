@@ -249,7 +249,8 @@ func checkRestored(t *testing.T, head api.Generation, target api.Generation, par
 	t.Helper()
 	if head.WorldID != target.WorldID || head.Number != parent+1 || head.Parent != parent ||
 		head.RestoredFrom == nil || *head.RestoredFrom != ref(target) ||
-		!slices.Equal(head.Files, target.Files) || head.HostEmail != emailA {
+		// Der Head geht an Bob: Alices Adresse fehlt, ihre Kennung steht da.
+		!slices.Equal(head.Files, target.Files) || head.HostEmail != "" || head.HostID == "" {
 		t.Fatalf("Head nach dem Zurückholen: %+v (RestoredFrom %+v), erwartet Inhalt von %s/%d auf %d",
 			head, head.RestoredFrom, target.WorldID, target.Number, parent)
 	}

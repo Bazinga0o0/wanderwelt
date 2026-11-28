@@ -147,7 +147,7 @@ func beispielZustand(jetzt time.Time, admin, host bool) *fensterapi.Zustand {
 		RAMTotalMB: 32 * 1024 * 95 / 100,
 		Autostart:  true,
 		Profil:     api.Profile{XmxMB: 6144, ViewDistance: 12, SimulationDistance: 10, C2ME: true, C2METhreads: 4},
-		Me:         &api.Me{Email: "lukas@example.de", MinecraftName: "Lukas", Admin: admin, MinecraftAddress: "wanderwelt.example.de"},
+		Me:         &api.Me{Email: "lukas@example.de", ID: "e4d1c7a0b9358f26", MinecraftName: "Lukas", Admin: admin, MinecraftAddress: "wanderwelt.example.de"},
 		Status: &api.Status{
 			HeadGeneration: 412, WorldID: "w-2026-11-03", MinecraftAddress: "wanderwelt.example.de",
 			HeadCreated: jetzt.Add(-3*time.Minute - 20*time.Second), SnapshotIntervalS: 300,
@@ -161,7 +161,7 @@ func beispielZustand(jetzt time.Time, admin, host bool) *fensterapi.Zustand {
 	}
 	z.Status.DiscordChannel = admin
 	if host {
-		z.Status.Host = &api.HostInfo{Email: "mara@example.de", MinecraftName: "Mara", MachineID: "pc-mara"}
+		z.Status.Host = &api.HostInfo{ID: "2f6c0a91d4e87b35", MinecraftName: "Mara", MachineID: "pc-mara"}
 		z.Status.HostReady = true
 		z.Status.Players = []string{"Mara", "Jonas", "Lukas"}
 		z.Phase = "Spielt mit"
@@ -239,10 +239,10 @@ func beispielStatistik(jetzt time.Time) *api.Stats {
 
 func beispielMitglieder() []api.MemberInfo {
 	return []api.MemberInfo{
-		{Email: "lukas@example.de", MinecraftName: "Lukas", Admin: true, Op: true, Online: true},
-		{Email: "mara@example.de", MinecraftName: "Mara", Op: true, Online: true},
-		{Email: "jonas.berger@example.de", MinecraftName: "Jonas", Online: true},
-		{Email: "kim@example.de", MinecraftName: "KimTheBuilder"},
+		{Email: "lukas@example.de", ID: "e4d1c7a0b9358f26", MinecraftName: "Lukas", Admin: true, Op: true, Online: true},
+		{Email: "2f6c0a91d4e87b35", ID: "2f6c0a91d4e87b35", MinecraftName: "Mara", Op: true, Online: true},
+		{Email: "9d3b71c8a05e24f6", ID: "9d3b71c8a05e24f6", MinecraftName: "Jonas", Online: true},
+		{Email: "c47e18b2f90d6a53", ID: "c47e18b2f90d6a53", MinecraftName: "KimTheBuilder"},
 	}
 }
 
@@ -267,7 +267,7 @@ func beispielLog(jetzt time.Time) string {
 
 func beispielAnfragen(jetzt time.Time) []api.JoinRequestInfo {
 	return []api.JoinRequestInfo{
-		{Email: "tim@example.de", MinecraftName: "Tim_Redstone", Requested: jetzt.Add(-3 * time.Hour)},
-		{Email: "a-sehr-lange-adresse.mit.vielen.teilen@subdomain.beispiel-universitaet.example.de", MinecraftName: "Zwoelf_Zeichen", Requested: jetzt.Add(-30 * time.Second)},
+		{Email: "5e0a93d7b1c46f28", ID: "5e0a93d7b1c46f28", MinecraftName: "Tim_Redstone", Requested: jetzt.Add(-3 * time.Hour)},
+		{Email: "b8142fd09a7c3e65", ID: "b8142fd09a7c3e65", MinecraftName: "Zwoelf_Zeichen", Requested: jetzt.Add(-30 * time.Second)},
 	}
 }

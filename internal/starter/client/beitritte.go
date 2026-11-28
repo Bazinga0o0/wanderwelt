@@ -18,20 +18,21 @@ func (c *Client) ListJoinRequests(ctx context.Context) ([]api.JoinRequestInfo, e
 	return out, nil
 }
 
-// AcceptJoin nimmt die Anfrage des Kontos email an
+// AcceptJoin nimmt die Anfrage des Kontos an (key: Kennung aus der Liste, bei
+// einem älteren Koordinator die Adresse)
 // (POST /v1/join-requests/{email}/accept; nur Admins). 404: keine offene
 // Anfrage; 409: der Minecraft-Name ist inzwischen vergeben.
-func (c *Client) AcceptJoin(ctx context.Context, email string) error {
-	return c.decideJoin(ctx, email, "accept")
+func (c *Client) AcceptJoin(ctx context.Context, key string) error {
+	return c.decideJoin(ctx, key, "accept")
 }
 
-// DeclineJoin lehnt die Anfrage des Kontos email ab
+// DeclineJoin lehnt die Anfrage ab (key wie bei AcceptJoin)
 // (POST /v1/join-requests/{email}/decline; nur Admins).
-func (c *Client) DeclineJoin(ctx context.Context, email string) error {
-	return c.decideJoin(ctx, email, "decline")
+func (c *Client) DeclineJoin(ctx context.Context, key string) error {
+	return c.decideJoin(ctx, key, "decline")
 }
 
-func (c *Client) decideJoin(ctx context.Context, email, was string) error {
+func (c *Client) decideJoin(ctx context.Context, key, was string) error {
 	return notSupported(c.call(ctx, callTimeout, http.MethodPost,
-		"/v1/join-requests/"+url.PathEscape(email)+"/"+was, nil, nil), false)
+		"/v1/join-requests/"+url.PathEscape(key)+"/"+was, nil, nil), false)
 }

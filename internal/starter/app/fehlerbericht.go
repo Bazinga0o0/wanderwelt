@@ -167,7 +167,9 @@ func (a *App) berichtZustand() fensterZustandBericht {
 			Members: s.Members, Worlds: len(s.Worlds), RunningWorld: s.RunningWorld,
 		}
 		if s.Host != nil {
-			out.Status.HostSeit = fmt.Sprint(s.Host)
+			// Nur der Minecraft-Name des Hosts: die Host-Struktur trägt auch die
+			// E-Mail-Adresse, die nicht in den Bericht gehört.
+			out.Status.HostName = s.Host.MinecraftName
 		}
 	}
 	if z.Me != nil {
@@ -217,7 +219,7 @@ type berichtStatus struct {
 	Members                  int
 	Worlds                   int
 	RunningWorld             string
-	HostSeit                 string `json:",omitempty"`
+	HostName                 string `json:",omitempty"`
 }
 
 type berichtRolle struct{ Admin, Op bool }

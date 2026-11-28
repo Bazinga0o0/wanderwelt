@@ -44,7 +44,7 @@ func beispielAnsichten(jetzt time.Time) []ansicht {
 	hostIch := beispielZustand(jetzt, true, true)
 	hostIch.Hosting, hostIch.Phase = true, "Hostet"
 	hostIch.HostAddr = "wanderwelt.example.de"
-	hostIch.Status.Host = &api.HostInfo{Email: "lukas@example.de", MinecraftName: "Lukas"}
+	hostIch.Status.Host = &api.HostInfo{ID: "e4d1c7a0b9358f26", MinecraftName: "Lukas"}
 	hostIch.Profil.Dauerbetrieb = true
 
 	laedt := beispielZustand(jetzt, false, false)
@@ -52,7 +52,7 @@ func beispielAnsichten(jetzt time.Time) []ansicht {
 
 	uebergabe := beispielZustand(jetzt, true, true)
 	uebergabe.Hosting, uebergabe.Phase = true, "Hostet"
-	uebergabe.Status.Host = &api.HostInfo{Email: "lukas@example.de", MinecraftName: "Lukas"}
+	uebergabe.Status.Host = &api.HostInfo{ID: "e4d1c7a0b9358f26", MinecraftName: "Lukas"}
 	uebergabe.Status.Handover = &api.HandoverState{HandoverID: 3, State: api.HandoverStarting,
 		To: api.HostInfo{MinecraftName: "Mara"}}
 	uebergabeFehl := beispielZustand(jetzt, false, true)
@@ -149,7 +149,7 @@ func beispielAnsichten(jetzt time.Time) []ansicht {
 	mitAnfragen.anfragen = beispielAnfragen(jetzt)
 	add("mitglieder-anfragen", mitAnfragen, reiterMitglieder, nil)
 	add("mitglieder-anfragen-rueckfrage", mitAnfragen, reiterMitglieder, func(u *oberflaeche, _ time.Time) {
-		u.mitgl.anfr.klick(&u.mitgl.anfr.ablehnen, "tim@example.de").Click()
+		u.mitgl.anfr.klick(&u.mitgl.anfr.ablehnen, "5e0a93d7b1c46f28").Click()
 	})
 	add("mitglieder-laedt", leer, reiterMitglieder, nil)
 	add("mitglieder-alter-koordinator", altKoord, reiterMitglieder, nil)

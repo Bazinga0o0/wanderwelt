@@ -37,6 +37,8 @@ import (
 	"github.com/Bazinga0o0/wanderwelt/internal/api"
 	"github.com/Bazinga0o0/wanderwelt/internal/koord/benachrichtigung"
 	"github.com/Bazinga0o0/wanderwelt/internal/koord/config"
+	"github.com/Bazinga0o0/wanderwelt/internal/koord/karte"
+	"github.com/Bazinga0o0/wanderwelt/internal/koord/kennung"
 	"github.com/Bazinga0o0/wanderwelt/internal/koord/lease"
 	"github.com/Bazinga0o0/wanderwelt/internal/koord/portholder"
 	"github.com/Bazinga0o0/wanderwelt/internal/koord/stats"
@@ -188,6 +190,9 @@ type Server struct {
 	presMu   sync.Mutex
 	presence map[string]presenceEntry
 
+	// ids bildet die pseudonymen Mitglieds-Kennungen (datenschutz.go).
+	ids *kennung.Schluessel
+
 	// stats zählt Spiel- und Hostzeit je Mitglied (stats.go).
 	stats *stats.Tracker
 	// health: Laufzeit-Merker der Gesundheit (health.go).
@@ -195,6 +200,9 @@ type Server struct {
 	// benach: Benachrichtigungen an Discord (nil: kein Webhook eingetragen).
 	// Gesetzt nur in New (und in Tests).
 	benach *benachrichtigung.Dienst
+	// karte: Karten-Dienst (karte.go); nil: nicht eingerichtet. Gesetzt nur
+	// über UseKarte (vor dem Betrieb).
+	karte *karte.Dienst
 
 	// jobs: Aufträge an den Host aus dem Reiter „Server“ (auftraege.go);
 	// jobPoll: so lange hält ein Abruf des Hosts (Tests verkürzen ihn).
@@ -238,6 +246,7 @@ func New(cfg *config.Config, lm *lease.Manager, st *store.Store, ph portholder.C
 		s.log.Warn("auth.mode dev: Identität kommt ungeprüft aus X-Tunnel-Account-Email – nur lokal benutzen")
 	}
 	s.membersVersion.Store(time.Now().UnixNano())
+	s.loadIDKey()
 	s.loadOverlays()
 	s.loadHo()
 	s.openStats()
@@ -287,6 +296,8 @@ func New(cfg *config.Config, lm *lease.Manager, st *store.Store, ph portholder.C
 	s.mux.HandleFunc("POST /v1/join-requests/{email}/accept", s.handleJoinAccept)
 	s.mux.HandleFunc("POST /v1/join-requests/{email}/decline", s.handleJoinDecline)
 	s.mux.HandleFunc("GET /v1/health", s.handleHealth)
+	s.mux.HandleFunc("GET /v1/karte/{welt}/manifest.json", s.handleKarteManifest)
+	s.mux.HandleFunc("GET /v1/karte/{welt}/t/{z}/{x}/{y}", s.handleKarteKachel)
 	s.mux.HandleFunc("GET /v1/worlds", s.handleWorlds)
 	s.mux.HandleFunc("POST /v1/worlds", s.handleWorldCreate)
 	s.mux.HandleFunc("PATCH /v1/worlds/{id}", s.handleWorldPatch)
@@ -543,11 +554,16 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, s.statusNow())
+	writeJSON(w, http.StatusOK, s.statusFor(identityOf(r).member.Email))
 }
 
-// statusNow ist der Status für Starter, Fenster und die Benachrichtigungen.
-func (s *Server) statusNow() api.Status {
+// statusNow ist der Status für die Benachrichtigungen (Server intern, ohne
+// Anfragenden: keine E-Mail-Adresse).
+func (s *Server) statusNow() api.Status { return s.statusFor("") }
+
+// statusFor ist der Status für Starter und Fenster; die Host-Adresse steht
+// nur drin, wenn viewer (E-Mail des Anfragenden) selbst der Host ist.
+func (s *Server) statusFor(viewer string) api.Status {
 	running := s.runningWorld()
 	worldID, head, created := s.st.HeadInfoOf(cmp.Or(running, s.normWorld("")))
 	st := api.Status{
@@ -558,7 +574,7 @@ func (s *Server) statusNow() api.Status {
 		HeadCreated:       created,
 		SnapshotIntervalS: int(s.cfg.SnapshotInterval / time.Second),
 		RestorePending:    s.restoreNotice(),
-		Handover:          s.handoverState(s.ho.Load(), false),
+		Handover:          s.handoverState(s.ho.Load(), false, viewer),
 		Maintenance:       s.wartungNotice(),
 		Resume:            s.resumeNotice(),
 	}
@@ -566,7 +582,7 @@ func (s *Server) statusNow() api.Status {
 	st.NoDiscordJoin = s.cfg.NoDiscordJoin
 	st.Worlds, st.RunningWorld = s.worldList(running), running
 	if info, ok := s.lm.Info(); ok {
-		st.Host = publicHost(info.Host)
+		st.Host = s.hostFor(info.Host, viewer, false)
 		// Ein Zuschlag nur zum Hochladen hat keinen Server: nie bereit.
 		st.HostReady = info.Ready && !info.UploadOnly
 		st.HostUploading = info.UploadOnly
@@ -727,24 +743,24 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 	// Während der Wartung startet niemand und spielt niemand mit; der
 	// Grund steht im Hinweis des Starters (wartung.go).
 	if reason := s.wartungReason(); reason != "" {
-		s.writePlay(w, lease.Grant{Role: api.RoleDenied}, reason, world)
+		s.writePlay(w, cand.Email, lease.Grant{Role: api.RoleDenied}, reason, world)
 		return
 	}
 	// Das automatische Fortsetzen nach der Wartung gibt es nur im offenen
 	// Fenster (wartung.go); ein gewöhnliches „Spielen“ ist nie betroffen.
 	if req.Resume && !s.resumeOpen() {
-		s.writePlay(w, lease.Grant{Role: api.RoleDenied}, api.ReasonResumeClosed, world)
+		s.writePlay(w, cand.Email, lease.Grant{Role: api.RoleDenied}, api.ReasonResumeClosed, world)
 		return
 	}
 	// Während ein Zurückholen aussteht, startet niemand und spielt niemand
 	// mit: Der Host stoppt gleich, danach gibt es einen neuen Head.
 	if reason := s.restoreBlocksPlay(context.WithoutCancel(r.Context())); reason != "" {
-		s.writePlay(w, lease.Grant{Role: api.RoleDenied}, reason, world)
+		s.writePlay(w, cand.Email, lease.Grant{Role: api.RoleDenied}, reason, world)
 		return
 	}
 	// Die gewünschte Welt gibt es nicht (mehr).
 	if reason != "" {
-		s.writePlay(w, lease.Grant{Role: api.RoleDenied}, reason, "")
+		s.writePlay(w, cand.Email, lease.Grant{Role: api.RoleDenied}, reason, "")
 		return
 	}
 	if req.UploadOnly {
@@ -756,7 +772,7 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 	// geht, einen Host für eine leere Welt wählen lassen nicht.
 	if e, ok := s.st.GroupWorld(world); ok && e.Empty() && !id.member.Admin {
 		if _, _, hosting := s.lm.Current(); !hosting {
-			s.writePlay(w, lease.Grant{Role: api.RoleDenied},
+			s.writePlay(w, cand.Email, lease.Grant{Role: api.RoleDenied},
 				"Die Welt „"+e.Name+"“ ist noch leer – ein Admin muss sie zuerst starten (oder eine Welt übernehmen).", world)
 			return
 		}
@@ -779,7 +795,7 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	s.writePlay(w, g, g.Reason, world)
+	s.writePlay(w, cand.Email, g, g.Reason, world)
 }
 
 // releaseStale gibt den Zuschlag frei, den derselbe PC (Konto und
@@ -856,9 +872,9 @@ func (s *Server) playUploadOnly(w http.ResponseWriter, r *http.Request, req api.
 	case err != nil:
 		s.internal(w, "Zuschlag zum Nachreichen", err)
 	case reason != "":
-		s.writePlay(w, lease.Grant{Role: api.RoleDenied}, reason, cand.World)
+		s.writePlay(w, cand.Email, lease.Grant{Role: api.RoleDenied}, reason, cand.World)
 	default:
-		s.writePlay(w, g, "", cand.World)
+		s.writePlay(w, cand.Email, g, "", cand.World)
 	}
 }
 
@@ -946,7 +962,7 @@ func (s *Server) clearLocked(ctx context.Context) {
 // (aufgelöste Kennung, "" ohne Weltliste); Head und Welt der Antwort sind
 // die des Zuschlags, bei „denied“ wegen einer anderen laufenden Welt die der
 // laufenden.
-func (s *Server) writePlay(w http.ResponseWriter, g lease.Grant, reason, world string) {
+func (s *Server) writePlay(w http.ResponseWriter, viewer string, g lease.Grant, reason, world string) {
 	if g.Reason == lease.ReasonOtherWorld {
 		running := s.normWorld(g.World)
 		name := "eine andere Welt"
@@ -971,23 +987,16 @@ func (s *Server) writePlay(w http.ResponseWriter, g lease.Grant, reason, world s
 	}
 	switch g.Role {
 	case api.RoleHost:
-		host := g.Host
 		resp.LeaseID = g.LeaseID
-		resp.Host = &host
+		resp.Host = s.hostFor(g.Host, viewer, true)
 	case api.RoleJoin:
-		resp.Host = publicHost(g.Host)
+		resp.Host = s.hostFor(g.Host, viewer, false)
 	default:
 		if info, ok := s.lm.Info(); ok {
-			resp.Host = publicHost(info.Host)
+			resp.Host = s.hostFor(info.Host, viewer, false)
 		}
 	}
 	writeJSON(w, http.StatusOK, resp)
-}
-
-// publicHost ist die Host-Angabe für andere als den Host: ohne MachineID,
-// die zusammen mit der LeaseID den Zuschlag ausmacht.
-func publicHost(h api.HostInfo) *api.HostInfo {
-	return &api.HostInfo{Email: h.Email, MinecraftName: h.MinecraftName}
 }
 
 // isHost meldet, ob leaseID der gültige Zuschlag ist und dem Konto von id
@@ -1042,7 +1051,7 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		MembersVersion: s.membersVersion.Load(),
 	}
 	if h := s.ho.Load(); h != nil && h.oldLease == req.LeaseID {
-		resp.Handover = s.handoverState(h, true)
+		resp.Handover = s.handoverState(h, true, id.member.Email)
 	}
 	// Der beförderte Host öffnet jetzt auch den Haupt-Port.
 	if rp := s.repl.Load(); rp != nil && rp.leaseID == req.LeaseID {
@@ -1093,6 +1102,9 @@ func (s *Server) handleRelease(w http.ResponseWriter, r *http.Request) {
 	case err != nil:
 		s.internal(w, "Rückgabe", err)
 	default:
+		if s.karte != nil {
+			s.karte.Schluss() // Schluss-Stand des Hosts: einmal die Karte nachführen
+		}
 		w.WriteHeader(http.StatusNoContent)
 	}
 }
@@ -1377,7 +1389,7 @@ func (s *Server) handleHead(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "es gibt noch keine Welt")
 		return
 	}
-	writeJSON(w, http.StatusOK, gen)
+	writeJSON(w, http.StatusOK, s.generationFor(gen, identityOf(r).member.Email))
 }
 
 func (s *Server) handleGeneration(w http.ResponseWriter, r *http.Request) {
@@ -1391,7 +1403,7 @@ func (s *Server) handleGeneration(w http.ResponseWriter, r *http.Request) {
 		s.storeError(w, "Generation", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, g)
+	writeJSON(w, http.StatusOK, s.generationFor(g, identityOf(r).member.Email))
 }
 
 // handleCommit nimmt einen Stand an. Er muss vom Konto und PC des gültigen
@@ -1434,7 +1446,10 @@ func (s *Server) handleCommit(w http.ResponseWriter, r *http.Request) {
 	}
 	s.log.Info("Stand angenommen", "welt", g.WorldID, "generation", g.Number,
 		"dateien", len(g.Files), "host", g.HostEmail, "lease", g.LeaseID)
-	writeJSON(w, http.StatusOK, g)
+	if s.karte != nil {
+		s.karte.Melde() // nur ein Wecker, blockiert nie
+	}
+	writeJSON(w, http.StatusOK, s.generationFor(g, id.member.Email))
 }
 
 // --- Profile und Messung ---

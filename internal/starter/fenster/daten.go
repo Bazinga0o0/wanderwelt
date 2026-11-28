@@ -61,6 +61,7 @@ const (
 	reiterStatistik // hinten angehängt (Reihenfolge der Reiter bleibt sonst)
 	reiterZustand   // nur Admins (zustand.go)
 	reiterServer    // nur Admins (server.go)
+	reiterKarte     // Mitglieder, nur mit Kartenstand der Welt (karte.go); ganz hinten
 	anzahlReiter
 )
 

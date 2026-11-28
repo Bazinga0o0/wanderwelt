@@ -142,6 +142,44 @@ Speicher mehr; wanderwelt läuft im Infobereich weiter.
   und dem letzten Aufräumen. Der Reiter aktualisiert sich alle 30 s, solange er
   offen ist. Ein älterer Koordinator ohne `GET /v1/health` zeigt „zu alt“.
 
+- **Karte** (jedes Mitglied, ganz hinten): die Oberwelt von oben, siehe
+  [Karte (Mitglieder)](#karte-mitglieder). Den Reiter gibt es nur, wenn der
+  Koordinator für die gewählte Welt eine Karte erzeugt hat.
+
+### Karte (Mitglieder)
+
+Der Reiter **Karte** zeigt die Oberwelt als Draufsicht. Er erscheint nur, wenn
+der Koordinator für die gewählte Welt eine Karte hat (Status nennt `karte`);
+ein älterer Koordinator oder eine Welt ohne Karte zeigt keinen Reiter. Du
+siehst die Landschaft (Farben der Blöcke von oben, keine Texturen), **keine
+Spieler und keine Positionen**.
+
+- **Bedienung**: Ziehen mit der Maus verschiebt, das Mausrad zoomt um die
+  Mausposition, die Knöpfe **+** und **−** zoomen um die Mitte (stufenlos,
+  1/64 bis 8 Pixel je Block; beim Vergrößern bleiben die Blockpixel scharf).
+  **Zur Mitte** springt in die Mitte der Karte, **Neu laden** holt sofort das
+  aktuelle Manifest und versucht gescheiterte Kacheln neu.
+- **Statusleiste**: „Stand: vor 14 Min.“ (wann der Koordinator die Karte
+  zuletzt erzeugt hat), Zoom und Kachelstufe, die Blockkoordinate (x, z) unter
+  der Maus und ein Hinweis, solange Kacheln laden. Fehler stehen als Meldung
+  da: „Die Karte ist noch nicht erzeugt“, „Der Koordinator ist nicht
+  erreichbar“ (eine schon geladene Karte bleibt dabei stehen) oder „Die Karte
+  ist ungültig“.
+- **Was geladen wird**: nur die Kacheln (256×256 Pixel, PNG) der gerade
+  sichtbaren Fläche, höchstens acht Abrufe gleichzeitig; verschiebst du die
+  Karte, werden Abrufe nicht mehr sichtbarer Kacheln abgebrochen. Solange der
+  Reiter offen ist, prüft das Fenster alle 60 Sekunden das Manifest der
+  Karte; nur Kacheln mit geändertem Hash werden neu geholt.
+- **Zwischenspeicher**: im Arbeitsspeicher höchstens 64 Kacheln; auf der Platte
+  unter `%LOCALAPPDATA%\wanderwelt\karte-cache\<Gruppe>\<Welt>\<sha256>.png`
+  höchstens 200 MB je Welt (die ältesten Dateien fliegen zuerst raus). Jede
+  Datei wird beim Lesen gegen ihren Hash aus dem Manifest geprüft; eine
+  veränderte oder halb geschriebene Datei wird verworfen und neu geholt. Der
+  Ordner lässt sich jederzeit löschen.
+- **Netz**: Das Fenster spricht nur mit der eigenen wanderwelt-Instanz; sie
+  holt Manifest und Kacheln mit dem Token der Gruppe vom Koordinator. Das
+  Token sieht das Fenster nie und es steht in keinem Log.
+
 ### Benachrichtigungen
 
 wanderwelt kann dir Bescheid sagen, was in der Gruppe passiert, auch wenn das
@@ -335,6 +373,32 @@ Windows-Benutzernamen in Pfaden ersetzt `%USERPROFILE%`).
 
 Admin- und Op-Schalter wirken live: Ein laufender Server gleicht sich danach
 an. Das letzte Admin-Mitglied kann sich das Admin-Recht nicht selbst nehmen.
+
+### Datenschutz: E-Mail-Adressen
+
+Deine E-Mail-Adresse (die des tunnel-Kontos) sieht nur der **Serverbetreiber**:
+wer den Koordinator betreibt, mit der Befehlszeile (`wanderwelt-koordinator
+mitglied …`), den Dateien und dem Log auf dem Server. Alle anderen sehen sie
+nie, auch Admins nicht, weder im Fenster noch in Hinweisen noch in der
+Schnittstelle des Koordinators:
+
+| Wer | sieht |
+|---|---|
+| du selbst | deine eigene Adresse (Einrichtung, „Ich“) |
+| andere Mitglieder | deinen Minecraft-Namen und deine Kennung |
+| Admins | deinen Minecraft-Namen und deine Kennung (Reiter Mitglieder, Beitrittsanfragen, Server), nicht deine Adresse |
+| Serverbetreiber | alles, auch die Adresse zu jeder Kennung (`mitglied liste`) |
+
+Die **Kennung** ist ein 16-stelliger Hex-Wert (zum Beispiel `9d3b71c8a05e24f6`),
+den der Koordinator aus der Adresse mit einem geheimen Schlüssel bildet: Er
+bleibt für ein Mitglied gleich (auch wenn die Adresse anders geschrieben ist),
+lässt sich aber nicht auf die Adresse zurückrechnen. Dein Starter erkennt dich
+(zum Beispiel als Host) an deiner eigenen Kennung.
+
+**Für Admins:** Mitglieder und Beitrittsanfragen erkennst du am Minecraft-Namen;
+die Kennung steht klein daneben. Brauchst du die Adresse (etwa um ein Konto bei
+tunnel zu prüfen, oder weil jemand noch keinen Minecraft-Namen hat), nenne dem
+Serverbetreiber die Kennung: Er sucht sie mit `mitglied liste` heraus.
 
 ### Server-Einstellungen (Reiter „Server“, nur Admins)
 
@@ -1093,6 +1157,28 @@ erneutes Zurückholen macht es rückgängig.
 - Ein ausstehendes Zurückholen steht nur im Speicher; siehe „Koordinator
   aktualisieren“.
 
+### Datenschutz: Kennungen der Mitglieder (Betreiber)
+
+Der Koordinator bildet für jedes Mitglied eine Kennung (`ID` in `GET
+/v1/members`, `/v1/status` und weiteren Antworten): Hex von
+HMAC-SHA256(Schlüssel, E-Mail in Kleinbuchstaben), auf 16 Zeichen gekürzt. Der
+Schlüssel ist eine zufällige Datei `idkey` in `data_dir` (0600, Besitzer
+`wanderwelt`), die der Koordinator **beim ersten Start** anlegt; er steht nie
+in der Schnittstelle oder im Log. Die Datei gehört zur Sicherung und darf nicht
+gelöscht werden (sonst ändern sich alle Kennungen, und die Rückfragen der
+Admins lassen sich nicht mehr zuordnen); ist sie kaputt, meldet der
+Koordinator „KENNUNGS-SCHLÜSSEL (idkey) NICHT LESBAR“ im Journal und
+vergibt bis zum Neustart flüchtige Kennungen, ohne die Datei anzufassen.
+
+`wanderwelt-koordinator mitglied liste` zeigt die Kennung neben der Adresse
+(sobald der Schlüssel existiert), und `mitglied entfernen` nimmt statt der
+Adresse auch die Kennung. So ordnest du die Kennung, die ein Admin nennt, einer
+Adresse zu. Ältere Starter (bis 0.1.9) funktionieren weiter: Die
+Mitgliederliste trägt in fremden Zeilen die Kennung im Feld `email`, damit
+Rollen und Anfragen über den Pfad weiter gehen (sie zeigen die Kennung dort,
+wo bisher die Adresse stand). **Beim Aktualisieren zuerst den Koordinator,
+dann die Starter.**
+
 ### Mitglieder hinzufügen
 
 Auf dem Mini-Server als root, nachdem `provisioning:` in der Konfiguration
@@ -1200,7 +1286,10 @@ sondern in Überlagerungen in `data_dir` (atomar, 0600, Besitzer
 
 - `roles.json` – Admin- und Op-Recht je Mitglied (E-Mail klein →
   `{"admin": …, "op": …}`), gesetzt mit `PUT /v1/members/{email}` (nur
-  Admins). Entspricht eine Rolle wieder der Konfiguration, fällt der Eintrag
+  Admins; an der Stelle `{email}` steht die **Kennung** aus der
+  Mitgliederliste, siehe „Datenschutz: E-Mail-Adressen“; die API nimmt dort
+  nur die Kennung oder die eigene Adresse, nie die eines anderen).
+  Entspricht eine Rolle wieder der Konfiguration, fällt der Eintrag
   weg. Das Admin-Recht des letzten Admins lässt sich nicht wegnehmen (409).
   Bliebe mit `roles.json` beim Start oder Neuladen kein Admin übrig (von Hand
   geändert, oder der einzige darüber ernannte Admin wurde entfernt), gilt
@@ -1462,7 +1551,9 @@ einer Ablehnung 24 Stunden Wartezeit.
 
 Admins sehen die offenen Anfragen mit `GET /v1/join-requests` (älteste zuerst;
 die Zahl steht auch in `GET /v1/me` als `pending_joins`) und entscheiden mit
-`POST /v1/join-requests/{email}/accept` bzw. `/decline` (204). Annehmen trägt
+`POST /v1/join-requests/{email}/accept` bzw. `/decline` (204; `{email}` ist die
+Kennung der Anfrage; die Liste nennt Minecraft-Name und Kennung, nie die
+Adresse). Annehmen trägt
 das Konto in `members.json` ein und erhöht `MembersVersion`: Der laufende Host
 nimmt den Spieler ohne Neustart in die Whitelist auf. Die tunnel-Freischaltung
 des Kontos bleibt Sache des Admins im tunneld-Admin-Panel. Anfragen und
@@ -1565,6 +1656,67 @@ verlässt den Server nicht. Ausgetretene Mitglieder bleiben in der Datei, aber
 nicht in der Antwort und nicht im Anteil. Eine kaputte Datei wird als
 `stats.json.kaputt-<Zeit>` beiseitegelegt, die Zählung beginnt leer. Löschen
 der Datei setzt die Statistik zurück (bei gestopptem Koordinator).
+
+### Karte (Admin)
+
+Der Koordinator kann eine Karte der Oberwelt jeder Welt erzeugen und den
+Mitgliedern ausliefern (Karten-Reiter des Starters; Vertrag
+Eingeschaltet wird sie mit dem Abschnitt `karte:` in der
+Koordinator-Konfiguration; Pflicht ist nur `binary`, der absolute Pfad des
+Programms `karte` (Rust, Release-Build von `tools/karte-rs`, nur auf den Server
+kopieren, kein Dienst):
+
+```yaml
+karte:
+  binary: /opt/wanderwelt/karte
+  # colors: /opt/wanderwelt/farben.json   # Farbtabelle (JSON), Standard: eingebaute
+  nice: 10             # 0–19, Priorität des Programms (nur Linux, über nice -n)
+  threads: 1           # 1–4
+  min_interval: 30m    # Mindestabstand zweier Läufe je Welt, 1m–24h
+  max_bytes: 1GiB      # größte erlaubte Karte je Welt (1MiB–1TiB, auch reine Bytes)
+```
+
+- **Wann gerendert wird.** Der Dienst prüft alle 20 s (und bei jedem
+  angenommenen Stand), ob der Head einer Welt neuer ist als der gerenderte
+  Kartenstand, und rendert dann höchstens alle `min_interval`; einmal zusätzlich
+  gleich nach dem Schluss-Stand eines Hosts (Rückgabe des Zuschlags), ohne
+  diesen Abstand. Nie während einer Wartung (ein laufender Lauf wird
+  abgebrochen, nach dem Ende der Wartung geht es weiter), nie im Pfad von
+  Lebenszeichen oder Commit (eigene Goroutine, Fehler werden gefangen).
+- **Woraus.** Nur die Regionsdateien der Oberwelt
+  (`dimensions/minecraft/overworld/region/r.X.Z.mca`) aus dem Speicher. Der
+  Dienst vergleicht die Hashes der Regionsdateien des Heads mit denen des
+  zuletzt gerenderten Stands (gespeichert in `state.json` im Kartenordner), setzt
+  nur die geänderten Regionen samt ihren Nachbarn aus den Segment-Blobs
+  zusammen (Temp-Ordner `data_dir/karte/.work-<welt>`, danach gelöscht) und
+  ruft `karte pyramid … --only-regions …` auf; der erste Lauf und jeder Lauf, nach
+  dem eine Region verschwunden ist, rendert alles. Zusammengesetzt wird ein
+  paar Dutzend MB je Lauf (ganze Welt: Größe der Regionsdateien, z. B.
+  685 MB), gelesen werden nur Blobs, nichts wird in `blobs/` geschrieben.
+- **Wo.** `data_dir/karte/<welt>/` (`<welt>` = Kennung der Welt der Gruppe,
+  `w1`, …) mit `karte.json`, `tiles/<z>/<x>/<y>.png` und `state.json`; immer nur
+  der neueste Stand. Der Lauf schreibt in `data_dir/karte/.staging-<welt>`; ist
+  er gut (Manifest gültig, jede Kachel da, Größe ≤ `max_bytes`), wird der Ordner
+  gegen den alten getauscht (zwei Umbenennungen unter Sperre; ein Absturz
+  dazwischen wird beim Start zurückgenommen). Scheitert ein Lauf oder bricht
+  er ab, bleibt der alte Stand unverändert und wird weiter ausgeliefert.
+- **Neustart.** Vorhandene Karten werden immer ausgeliefert. Fehlt `karte:`
+  oder das Programm, ist nur die Erzeugung aus (ein Hinweis im Log).
+- **Endpunkte** (nur Mitglieder, sonst 403; höchstens 50 Anfragen/s im Mittel
+  je Mitglied, kurz bis 150, sonst 429): `GET /v1/karte/<welt>/manifest.json`
+  und `GET /v1/karte/<welt>/t/<z>/<x>/<y>.png` (ETag = SHA-256, `If-None-Match`
+  → 304, `Cache-Control: private, max-age=60`, 404 für Fehlendes, 400 für
+  ungültige Zahlen). Der Status nennt je Welt `karte` (Stand, Zahl der Kacheln,
+  Stufen, Grenzen der Stufe 0).
+- **Prüfen.** `GET /v1/health` (Admin) hat den Block `karte` (Erzeugung an,
+  Zeit und Dauer des letzten Laufs, Größe, Kacheln, letzter Fehler); ein Fehler
+  ist eine Warnung. Das Programm schreibt Fehler auf stderr; der Dienst loggt
+  Exit-Code und die letzten 1500 Zeichen (nie Tokens oder Umgebung). Nach einem
+  Fehler wartet er 10 Minuten bis zum nächsten Versuch.
+- **Last auf einem kleinen Server (Schätzung).** Ganze Oberwelt der Testwelt (150
+  Regionen, 685 MB): etwa 15–30 s CPU, ~40 MB RAM beim Programm, ~20 MB Karte;
+  eine Nachführung (wenige Regionen mit Nachbarn) unter einer Sekunde bis
+  wenigen Sekunden. Die Karte hängt nicht von der Zahl der Spieler ab.
 
 ### Weitere Gruppe anlegen (Betreiber)
 

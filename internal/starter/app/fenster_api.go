@@ -161,6 +161,8 @@ func (a *App) ansicht(w http.ResponseWriter, r *http.Request, name string) {
 		})
 	case "entdecken":
 		a.entdeckenAnsicht(w, r)
+	case "kartemanifest", "kartekachel":
+		a.karteAnsicht(w, r, name)
 	case "speicherstaende":
 		a.speicherstaende(w, r)
 	case "log":
@@ -279,32 +281,36 @@ func (a *App) aktion(w http.ResponseWriter, r *http.Request, name string, body [
 		})
 	case aktionRolle:
 		var req struct {
-			Email string `json:"email"`
+			ID    string `json:"id"`
+			Email string `json:"email"` // ältere Fenster
 			Admin bool   `json:"admin"`
 			Op    bool   `json:"op"`
 		}
-		if err := json.Unmarshal(body, &req); err != nil || strings.TrimSpace(req.Email) == "" {
-			antwortFehler(w, http.StatusBadRequest, "Welches Mitglied? Erwartet {\"email\": …, \"admin\": …, \"op\": …}.")
+		if err := json.Unmarshal(body, &req); err != nil || strings.TrimSpace(req.ID+req.Email) == "" {
+			antwortFehler(w, http.StatusBadRequest, "Welches Mitglied? Erwartet {\"id\": …, \"admin\": …, \"op\": …}.")
 			return
 		}
+		key := strings.TrimSpace(cmp.Or(req.ID, req.Email))
 		_, ok := koordAufruf(a, w, r, "Rolle", func(ctx context.Context, c *client.Client) (*api.MemberInfo, error) {
-			return c.SetRole(ctx, req.Email, api.RoleRequest{Admin: req.Admin, Op: req.Op})
+			return c.SetRole(ctx, key, api.RoleRequest{Admin: req.Admin, Op: req.Op})
 		})
 		a.mu.Lock()
-		self := a.me != nil && strings.EqualFold(a.me.Email, req.Email)
+		self := istEigenerSchluessel(a.me, key)
 		a.mu.Unlock()
 		if ok && self {
 			go a.pollStatus(true) // das eigene Admin-Recht hat sich vielleicht geändert
 		}
 	case aktionMcName:
 		var req struct {
-			Email string `json:"email"`
+			ID    string `json:"id"`
+			Email string `json:"email"` // ältere Fenster
 			Name  string `json:"name"`
 		}
-		if err := json.Unmarshal(body, &req); err != nil || strings.TrimSpace(req.Email) == "" {
-			antwortFehler(w, http.StatusBadRequest, "Welches Mitglied? Erwartet {\"email\": …, \"name\": …}.")
+		if err := json.Unmarshal(body, &req); err != nil || strings.TrimSpace(req.ID+req.Email) == "" {
+			antwortFehler(w, http.StatusBadRequest, "Welches Mitglied? Erwartet {\"id\": …, \"name\": …}.")
 			return
 		}
+		key := strings.TrimSpace(cmp.Or(req.ID, req.Email))
 		req.Name = strings.TrimSpace(req.Name)
 		if !mcNameRE.MatchString(req.Name) {
 			antwortFehler(w, http.StatusBadRequest, "Der Name besteht aus 3 bis 16 Buchstaben, Ziffern oder Unterstrichen.")
@@ -318,23 +324,25 @@ func (a *App) aktion(w http.ResponseWriter, r *http.Request, name string, body [
 			return
 		}
 		_, ok := koordAufruf(a, w, r, "Minecraft-Name", func(ctx context.Context, c *client.Client) (struct{}, error) {
-			return struct{}{}, c.SetMemberMinecraft(ctx, req.Email, req.Name)
+			return struct{}{}, c.SetMemberMinecraft(ctx, key, req.Name)
 		})
 		a.mu.Lock()
-		self := a.me != nil && strings.EqualFold(a.me.Email, req.Email)
+		self := istEigenerSchluessel(a.me, key)
 		a.mu.Unlock()
 		if ok && self {
 			go a.pollStatus(true)
 		}
 	case aktionBeitritt:
 		var req struct {
-			Email    string `json:"email"`
+			ID       string `json:"id"`
+			Email    string `json:"email"` // ältere Fenster
 			Annehmen bool   `json:"annehmen"`
 		}
-		if err := json.Unmarshal(body, &req); err != nil || strings.TrimSpace(req.Email) == "" {
-			antwortFehler(w, http.StatusBadRequest, "Welche Anfrage? Erwartet {\"email\": …, \"annehmen\": …}.")
+		if err := json.Unmarshal(body, &req); err != nil || strings.TrimSpace(req.ID+req.Email) == "" {
+			antwortFehler(w, http.StatusBadRequest, "Welche Anfrage? Erwartet {\"id\": …, \"annehmen\": …}.")
 			return
 		}
+		key := strings.TrimSpace(cmp.Or(req.ID, req.Email))
 		a.mu.Lock()
 		admin := a.me != nil && a.me.Admin
 		a.mu.Unlock()
@@ -344,9 +352,9 @@ func (a *App) aktion(w http.ResponseWriter, r *http.Request, name string, body [
 		}
 		_, ok := koordAufruf(a, w, r, "Beitrittsanfrage", func(ctx context.Context, c *client.Client) (struct{}, error) {
 			if req.Annehmen {
-				return struct{}{}, c.AcceptJoin(ctx, req.Email)
+				return struct{}{}, c.AcceptJoin(ctx, key)
 			}
-			return struct{}{}, c.DeclineJoin(ctx, req.Email)
+			return struct{}{}, c.DeclineJoin(ctx, key)
 		})
 		if ok {
 			go a.pollStatus(true) // Zähler und Tray-Hinweis neu
@@ -646,9 +654,15 @@ func koordAufruf[T any](a *App, w http.ResponseWriter, r *http.Request, was stri
 	return v, true
 }
 
+// istEigenerSchluessel meldet, ob key (Kennung, bei einem älteren Koordinator
+// die Adresse) das Mitglied me bezeichnet.
+func istEigenerSchluessel(me *api.Me, key string) bool {
+	return me != nil && key != "" && (strings.EqualFold(me.Email, key) || me.ID == key)
+}
+
 // logFehler ist err fürs Log, ohne den Pfad des Koordinator-Aufrufs: Der
-// enthält die E-Mail-Adresse anderer Mitglieder (/v1/members/<email>), und
-// das Log steht im Log-Tab des Fensters.
+// enthält bei einem älteren Koordinator die E-Mail-Adresse anderer Mitglieder
+// (/v1/members/<email>), und das Log steht im Log-Tab des Fensters.
 func logFehler(err error) string {
 	if se, ok := errors.AsType[*client.StatusError](err); ok {
 		s := fmt.Sprintf("Koordinator: %s %d", se.Method, se.StatusCode)

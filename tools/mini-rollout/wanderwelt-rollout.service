@@ -1,0 +1,8 @@
+# Spielt vorgemerkte wanderwelt-Updates ein (siehe wanderwelt-rollout).
+# Installation: tools/mini-rollout/installieren.sh
+[Unit]
+Description=wanderwelt: vorgemerkte Updates einspielen, wenn niemand hostet
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/wanderwelt-rollout run

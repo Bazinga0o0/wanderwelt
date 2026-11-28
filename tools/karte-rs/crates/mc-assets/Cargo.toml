@@ -1,0 +1,18 @@
+[package]
+name = "mc-assets"
+description = "Client-JAR lesen: Blockstates, Modelle, Oberseiten-Texturen, Biomfarben"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+mc-region.workspace = true
+zip = { workspace = true }
+png.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

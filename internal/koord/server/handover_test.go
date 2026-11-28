@@ -1,8 +1,10 @@
 package server_test
 
 import (
+	"encoding/json"
 	"net/http"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -158,10 +160,10 @@ func TestHandoverFullFlow(t *testing.T) {
 		t.Fatalf("Angebot ohne Übergabe: %+v", r.Handover)
 	}
 	st := e.mustStart(userA, pcA1, lidA)
-	if st.To.Email != emailB || st.To.MinecraftName != "Bob" || st.HandoverID == 0 {
+	if st.To.Email != "" || st.To.ID == "" || st.To.MinecraftName != "Bob" || st.HandoverID == 0 {
 		t.Fatalf("Start: %+v", st)
 	}
-	if s := e.state(); s == nil || s.State != api.HandoverPreparing || s.Address != "" || s.To.Email != emailB {
+	if s := e.state(); s == nil || s.State != api.HandoverPreparing || s.Address != "" || s.To.Email != "" || s.To.ID == "" {
 		t.Fatalf("Status in Vorbereitung: %+v", s)
 	}
 	if hb := e.mustHB(userA, pcA1, lidA, true, "Alice", "Bob"); hb.Handover == nil || hb.Handover.State != api.HandoverPreparing {
@@ -201,7 +203,7 @@ func TestHandoverFullFlow(t *testing.T) {
 	r := e.present(userB, pcB, true)
 	o := r.Handover
 	if o == nil || o.HandoverID != st.HandoverID || o.Port != portR1 || o.WorldID != e.head().WorldID ||
-		o.HeadGeneration != e.head().Number || o.From.Email != emailA || o.From.MachineID != "" ||
+		o.HeadGeneration != e.head().Number || o.From.Email != "" || o.From.ID == "" || o.From.MachineID != "" ||
 		o.MinecraftAddress != "mc.example.org:15565" || o.LeaseID == 0 || o.LeaseID == lidA {
 		t.Fatalf("Angebot: %+v", o)
 	}
@@ -246,7 +248,7 @@ func TestHandoverFullFlow(t *testing.T) {
 	if !hb.MainPort || hb.Handover != nil {
 		t.Fatalf("Lebenszeichen nach Beförderung: %+v", hb)
 	}
-	if s := getStatus(t, e.base, userA); s.Handover != nil || s.Host == nil || s.Host.Email != emailB {
+	if s := getStatus(t, e.base, userA); s.Handover != nil || s.Host == nil || s.Host.Email != "" || s.Host.MinecraftName != "Bob" {
 		t.Fatalf("Status nach Beförderung: %+v", s)
 	}
 	if code := e.commitCode(userB, pcB, o.LeaseID, 3); code != http.StatusOK {
@@ -281,7 +283,7 @@ func TestHandoverSecondUsesOtherPort(t *testing.T) {
 	// Zweite Übergabe von Bob an Alices zweiten PC.
 	e.present(userA, pcA2, true)
 	h2 := e.mustStart(userB, pcB, lidB)
-	if h2.To.Email != emailA {
+	if h2.To.Email != "" || h2.To.MinecraftName != "Alice" {
 		t.Fatalf("zweiter Kandidat: %+v", h2.To)
 	}
 	e.mustReady(userB, pcB, lidB, h2.HandoverID)
@@ -386,7 +388,7 @@ func TestHandoverCandidateNeedsPlayerInGame(t *testing.T) {
 		t.Fatalf("Start mit nicht anwesendem Mitspieler: %d", code)
 	}
 	e.present(userB, pcB, false) // Dauerbetrieb
-	if code, st := e.start(userA, pcA1, lidA); code != http.StatusOK || st.To.Email != emailB {
+	if code, st := e.start(userA, pcA1, lidA); code != http.StatusOK || st.To.Email != "" || st.To.MinecraftName != "Bob" {
 		t.Fatalf("Start mit untätigem PC: %d %+v", code, st)
 	}
 }
@@ -645,4 +647,54 @@ func TestHandoverAbort(t *testing.T) {
 			t.Fatal("Übergabe nach abort mit falscher Nummer weg")
 		}
 	})
+}
+
+// Findet die Übergabe keinen Kandidaten, nennt die Fehlermeldung (und damit
+// das Log des Hosts, das mit der Welt wandert) den Grund: veraltet, nicht im
+// Spiel, keine Übernahme – nur mit Minecraft-Namen, nie mit E-Mail-Adressen.
+func TestHandoverStartRefusalNamesReason(t *testing.T) {
+	e := newHoEnv(t)
+	lid := e.host(userA, pcA1)
+	e.commit(userA, pcA1, lid, 1, true, manifestMC)
+
+	reason := func() string {
+		t.Helper()
+		code, body := e.raw(userA, http.MethodPost, "/v1/handover/start", api.HandoverStartRequest{LeaseID: lid, MachineID: pcA1})
+		if code != http.StatusConflict {
+			t.Fatalf("Start: %d %s", code, body)
+		}
+		var out struct {
+			Error string `json:"error"`
+		}
+		if err := json.Unmarshal(body, &out); err != nil {
+			t.Fatal(err)
+		}
+		return out.Error
+	}
+
+	// Niemand gemeldet.
+	if msg := reason(); !strings.Contains(msg, "kein PC hat sich als übernahmebereit gemeldet") {
+		t.Errorf("ohne Meldung: %q", msg)
+	}
+	// Bob meldet sich als Mitspieler, steht aber nicht in der Spielerliste.
+	e.mustHB(userA, pcA1, lid, true, "Alice")
+	e.present(userB, pcB, true)
+	msg := reason()
+	for _, want := range []string{"1 PC gemeldet", "nicht in der Spielerliste", "Spielerliste des Hosts: Alice"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("nicht im Spiel: %q fehlt in %q", want, msg)
+		}
+	}
+	// Veraltete Meldung.
+	e.clk.Advance(20 * time.Second)
+	e.mustHB(userA, pcA1, lid, true, "Alice", "Bob")
+	if msg := reason(); !strings.Contains(msg, "zu lange nicht gehört") || !strings.Contains(msg, "s gehört") {
+		t.Errorf("veraltet: %q", msg)
+	}
+	// Keine E-Mail-Adresse in der Meldung.
+	for _, m := range []string{reason(), msg} {
+		if strings.Contains(m, "@") || strings.Contains(m, emailB) {
+			t.Errorf("Adresse in der Meldung: %q", m)
+		}
+	}
 }

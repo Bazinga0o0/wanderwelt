@@ -82,7 +82,7 @@ func TestWatchHost(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s := &statusSeq{seq: tc.seq}
 			readies := 0
-			got := watchHost(t.Context(), s.get, a, time.Millisecond, 20*time.Millisecond, cmp.Or(tc.readyMax, 10*time.Second),
+			got := watchHost(t.Context(), s.get, api.HostInfo{Email: a}, time.Millisecond, 20*time.Millisecond, cmp.Or(tc.readyMax, 10*time.Second),
 				func(st *api.Status) {
 					if !st.HostReady {
 						t.Errorf("ready mit nicht bereitem Host")
@@ -98,7 +98,7 @@ func TestWatchHost(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		s := &statusSeq{seq: []statusStep{hostStatus(a, false)}}
 		time.AfterFunc(20*time.Millisecond, cancel)
-		if got := watchHost(ctx, s.get, a, time.Millisecond, time.Hour, time.Hour, func(*api.Status) {}); got != watchCanceled {
+		if got := watchHost(ctx, s.get, api.HostInfo{Email: a}, time.Millisecond, time.Hour, time.Hour, func(*api.Status) {}); got != watchCanceled {
 			t.Fatalf("watchHost nach Abbruch = %v", got)
 		}
 	})

@@ -38,17 +38,19 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Bazinga0o0/wanderwelt/internal/koord/config"
+	"github.com/Bazinga0o0/wanderwelt/internal/koord/kennung"
 )
 
 const mitgliedUsage = `  wanderwelt-koordinator mitglied neu --name NAME [--minecraft MCNAME] [--email E] [--admin] [--op] [--aus DIR] [--config PATH]
       legt tunnel-Konto und Token an, trägt das Mitglied ein und schreibt DIR/gruppe-NAME.yaml
       (bei neuem Konto auch DIR/zugang-NAME.txt mit Passwort für die Web-Anmeldung);
       ohne --minecraft meldet das Mitglied seinen Namen beim Einrichten des Starters selbst
-  wanderwelt-koordinator mitglied entfernen <minecraft-name|e-mail> [--konto-sperren] [--auch-fremdes-konto] [--config PATH]
+  wanderwelt-koordinator mitglied entfernen <minecraft-name|e-mail|kennung> [--konto-sperren] [--auch-fremdes-konto] [--config PATH]
       widerruft den Token, trägt das Mitglied aus (sperrt Konten @wanderwelt.invalid);
       ein Konto ohne Mitgliedseintrag nur bei @wanderwelt.invalid oder mit --auch-fremdes-konto
   wanderwelt-koordinator mitglied liste [--config PATH]
-      zeigt die Mitglieder mit den wirksamen Namen und Rollen (auch den im Fenster geänderten)
+      zeigt die Mitglieder mit E-Mail, Kennung (die im Fenster erscheint) und den wirksamen Namen und Rollen
+      (auch den im Fenster geänderten); E-Mail-Adressen sieht nur der Betreiber
 `
 
 const (
@@ -583,8 +585,10 @@ func (c *mitgliedCmd) doEntfernen(cfgPath, who string, lock, foreign bool) error
 		m     config.Member
 		found bool
 	)
+	ids := c.idKey(cfg)
 	for _, x := range effective {
-		if strings.EqualFold(x.Email, who) || strings.EqualFold(x.Minecraft, who) {
+		if strings.EqualFold(x.Email, who) || strings.EqualFold(x.Minecraft, who) ||
+			(ids != nil && kennung.IstID(strings.ToLower(who)) && ids.ID(x.Email) == strings.ToLower(who)) {
 			m, found = x, true
 			break
 		}
@@ -594,7 +598,7 @@ func (c *mitgliedCmd) doEntfernen(cfgPath, who string, lock, foreign bool) error
 		// Nach einem Abbruch von „mitglied neu“ steht das Konto noch nicht
 		// in der Konfiguration; über die E-Mail lässt es sich aufräumen.
 		if !strings.Contains(who, "@") {
-			return fmt.Errorf("kein Mitglied mit E-Mail oder Minecraft-Name %q", who)
+			return fmt.Errorf("kein Mitglied mit E-Mail, Kennung oder Minecraft-Name %q", who)
 		}
 		// Solche Reste haben die Domain @wanderwelt.invalid, außer „mitglied
 		// neu“ lief mit --email. Jedes andere tunnel-Konto (auch das eines
@@ -724,8 +728,15 @@ func (c *mitgliedCmd) liste(args []string) int {
 	// Grundlage zum Vergleichen: Konfiguration plus angenommene Mitglieder
 	// (gleiche Reihenfolge wie effective).
 	base, _ := config.BaseMembers(cfg.Members, cfg.DataDir)
+	ids := c.idKey(cfg)
 	tw := tabwriter.NewWriter(c.out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "E-MAIL\tMINECRAFT\tROLLEN")
+	// Die Spalte KENNUNG gibt es, sobald der Koordinator seinen Schlüssel
+	// angelegt hat (erster Start nach dem Update).
+	if ids != nil {
+		fmt.Fprintln(tw, "E-MAIL\tKENNUNG\tMINECRAFT\tROLLEN")
+	} else {
+		fmt.Fprintln(tw, "E-MAIL\tMINECRAFT\tROLLEN")
+	}
 	changed := false
 	for i, m := range effective {
 		cm := base[i] // gleiche Reihenfolge
@@ -743,7 +754,11 @@ func (c *mitgliedCmd) liste(args []string) int {
 		if i >= len(cfg.Members) {
 			email += " (beigetreten)"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\n", email, mc, r)
+		if ids != nil {
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", email, ids.ID(m.Email), mc, r)
+		} else {
+			fmt.Fprintf(tw, "%s\t%s\t%s\n", email, mc, r)
+		}
 	}
 	tw.Flush()
 	if changed {
@@ -751,6 +766,26 @@ func (c *mitgliedCmd) liste(args []string) int {
 			config.NamesFile, config.RolesFile, cfg.DataDir)
 	}
 	return 0
+}
+
+// idKey liest den Schlüssel der Mitglieds-Kennungen aus data_dir (nur lesen:
+// Der Koordinator legt ihn beim Start an, eine Datei von root wäre für den
+// Dienst vielleicht nicht lesbar); nil, wenn es ihn nicht gibt. Die Kennung
+// ist es, was Mitglieder und Admins im Fenster sehen; nur der Betreiber kann
+// sie hier einer Adresse zuordnen.
+func (c *mitgliedCmd) idKey(cfg *config.Config) *kennung.Schluessel {
+	if cfg.DataDir == "" {
+		return nil
+	}
+	k, ok, err := kennung.Lesen(cfg.DataDir)
+	if err != nil {
+		fmt.Fprintln(c.errOut, "Warnung: Kennungs-Schlüssel nicht lesbar:", err)
+		return nil
+	}
+	if !ok {
+		return nil
+	}
+	return k
 }
 
 // effective liefert die Mitglieder aus cfg mit den Überlagerungen aus

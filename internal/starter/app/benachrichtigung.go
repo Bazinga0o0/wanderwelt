@@ -158,8 +158,10 @@ func eigenesFiltern(e ereignis.Ereignis, me *api.Me) (ereignis.Ereignis, bool) {
 	if me == nil {
 		return e, false
 	}
+	// Der Schlüssel eines Hosts ist seine Kennung (älterer Koordinator: seine
+	// Adresse, klein); beides gehört dem Mitglied selbst.
 	mail := strings.ToLower(strings.TrimSpace(me.Email))
-	ich := func(key string) bool { return mail != "" && key == mail }
+	ich := func(key string) bool { return key != "" && (key == mail || key == me.ID) }
 	switch e.Art {
 	case ereignis.HostStartet, ereignis.WeltOnline, ereignis.NiemandHostet:
 		return e, ich(e.WerKey)

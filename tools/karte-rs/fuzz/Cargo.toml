@@ -1,0 +1,53 @@
+[package]
+name = "karte-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+mc-nbt = { path = "../crates/mc-nbt" }
+mc-region = { path = "../crates/mc-region" }
+mc-assets = { path = "../crates/mc-assets" }
+mc-tiles = { path = "../crates/mc-tiles" }
+serde_json = "1"
+
+[workspace]
+
+[[bin]]
+name = "nbt"
+path = "fuzz_targets/nbt.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "region"
+path = "fuzz_targets/region.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "manifest"
+path = "fuzz_targets/manifest.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "table"
+path = "fuzz_targets/table.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "tile"
+path = "fuzz_targets/tile.rs"
+test = false
+doc = false
+bench = false

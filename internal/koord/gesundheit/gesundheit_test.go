@@ -260,3 +260,18 @@ func TestFormate(t *testing.T) {
 		}
 	}
 }
+
+func TestKarteFehlerWarnt(t *testing.T) {
+	in := gesund()
+	in.KarteFehler = "w1: Programm endete mit Exit-Code 3"
+	w := Warnungen(in)
+	if !hat(w, api.WarnWarnung, "Karte konnte zuletzt nicht erzeugt werden") || !hat(w, api.WarnWarnung, "Exit-Code 3") {
+		t.Fatalf("Warnungen: %#v", w)
+	}
+	if Ampel(w) != api.HealthWarnung {
+		t.Fatalf("Ampel: %s", Ampel(w))
+	}
+	if w := Warnungen(gesund()); hat(w, api.WarnWarnung, "Karte") {
+		t.Fatal("ohne Fehler keine Warnung")
+	}
+}

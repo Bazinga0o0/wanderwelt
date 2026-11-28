@@ -19,6 +19,7 @@ package server
 // die Whitelist auf (Lebenszeichen), ohne Neustart.
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -30,6 +31,7 @@ import (
 
 	"github.com/Bazinga0o0/wanderwelt/internal/api"
 	"github.com/Bazinga0o0/wanderwelt/internal/koord/config"
+	"github.com/Bazinga0o0/wanderwelt/internal/koord/kennung"
 )
 
 // handleJoin nimmt die Beitrittsanfrage eines Nicht-Mitglieds entgegen.
@@ -235,7 +237,9 @@ func (s *Server) handleJoinRequests(w http.ResponseWriter, r *http.Request) {
 	s.overlayMu.Unlock()
 	out := make([]api.JoinRequestInfo, 0, len(open))
 	for _, e := range open {
-		out = append(out, api.JoinRequestInfo{Email: e.Email, MinecraftName: e.Minecraft, Requested: e.Requested})
+		id := s.id(e.Email)
+		// Email trägt die Kennung (nie die Adresse): nur für ältere Starter.
+		out = append(out, api.JoinRequestInfo{Email: id, ID: id, MinecraftName: e.Minecraft, Requested: e.Requested})
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -248,7 +252,12 @@ func (s *Server) handleJoinAccept(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "Beitrittsanfragen annehmen dürfen nur Admins")
 		return
 	}
-	if err := s.acceptJoin(r.PathValue("email"), admin.Email); err != nil {
+	key := r.PathValue("email")
+	if !pfadSchluessel(key, admin.Email) {
+		writeError(w, http.StatusNotFound, "keine offene Beitrittsanfrage mit dieser Kennung")
+		return
+	}
+	if err := s.acceptJoin(key, admin.Email); err != nil {
 		s.changeError(w, "Beitrittsanfrage annehmen", err)
 		return
 	}
@@ -262,7 +271,12 @@ func (s *Server) handleJoinDecline(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "Beitrittsanfragen ablehnen dürfen nur Admins")
 		return
 	}
-	if err := s.declineJoin(r.PathValue("email"), admin.Email); err != nil {
+	key := r.PathValue("email")
+	if !pfadSchluessel(key, admin.Email) {
+		writeError(w, http.StatusNotFound, "keine offene Beitrittsanfrage mit dieser Kennung")
+		return
+	}
+	if err := s.declineJoin(key, admin.Email); err != nil {
 		s.changeError(w, "Beitrittsanfrage ablehnen", err)
 		return
 	}
@@ -273,8 +287,16 @@ func (s *Server) handleJoinDecline(w http.ResponseWriter, r *http.Request) {
 // gibt. Aufruf unter overlayMu.
 func (s *Server) openJoinLocked(email string) (config.JoinEntry, error) {
 	e, ok := s.joins[strings.ToLower(email)]
+	if !ok && kennung.IstID(email) {
+		for _, c := range s.joins {
+			if s.id(c.Email) == email {
+				e, ok = c, true
+				break
+			}
+		}
+	}
 	if !ok || e.State != config.JoinStateOpen {
-		return config.JoinEntry{}, &httpError{http.StatusNotFound, "keine offene Beitrittsanfrage von " + email}
+		return config.JoinEntry{}, &httpError{http.StatusNotFound, "keine offene Beitrittsanfrage mit dieser Kennung"}
 	}
 	return e, nil
 }
@@ -288,12 +310,12 @@ func (s *Server) acceptJoin(email, by string) error {
 	}
 	key := strings.ToLower(e.Email)
 	if indexMember(s.cfgMembers, e.Email) >= 0 {
-		return &httpError{http.StatusConflict, e.Email + " ist schon Mitglied"}
+		return &httpError{http.StatusConflict, cmp.Or(e.Minecraft, "Mitglied "+s.id(e.Email)) + " ist schon Mitglied"}
 	}
 	for _, m := range s.memberList() {
 		if strings.EqualFold(m.Minecraft, e.Minecraft) {
 			return &httpError{http.StatusConflict, fmt.Sprintf(
-				"Der Minecraft-Name %s gehört inzwischen %s – die Anfrage besser ablehnen", e.Minecraft, m.Email)}
+				"Der Minecraft-Name %s gehört inzwischen %s – die Anfrage besser ablehnen", e.Minecraft, s.who(m))}
 		}
 	}
 	// Erst Mitglied machen, dann die Anfrage streichen: Bleibt das Streichen

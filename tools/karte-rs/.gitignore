@@ -1,0 +1,9 @@
+*.jar
+*.png
+*.webp
+fuzz/artifacts/
+fuzz/corpus/
+fuzz/target/
+mutants.out.old/
+mutants.out/
+target/

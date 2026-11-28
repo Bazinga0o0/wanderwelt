@@ -114,11 +114,11 @@ func presenceKey(email, machine string) string { return strings.ToLower(email) +
 
 // handoverState beschreibt h für den Starter; mit addr auch die Adresse
 // des Ersatz-Ports (nur für den alten Host).
-func (s *Server) handoverState(h *handover, withAddr bool) *api.HandoverState {
+func (s *Server) handoverState(h *handover, withAddr bool, viewer string) *api.HandoverState {
 	if h == nil {
 		return nil
 	}
-	st := &api.HandoverState{HandoverID: h.id, State: h.state, Reason: h.reason, To: *publicHost(candHost(h.to))}
+	st := &api.HandoverState{HandoverID: h.id, State: h.state, Reason: h.reason, To: *s.hostFor(candHost(h.to), viewer, false)}
 	if h.state == api.HandoverStarting && h.ready {
 		st.State = api.HandoverReady
 		if withAddr {
@@ -353,7 +353,7 @@ func (s *Server) handlePresence(w http.ResponseWriter, r *http.Request) {
 	var resp api.PresenceResponse
 	if h := s.ho.Load(); h != nil && h.state == api.HandoverStarting && !h.accepted &&
 		strings.EqualFold(h.to.Email, id.member.Email) && h.to.MachineID == req.MachineID {
-		from := *publicHost(h.from)
+		from := *s.hostFor(h.from, id.member.Email, false)
 		resp.Handover = &api.HandoverOffer{
 			HandoverID:       h.id,
 			LeaseID:          h.inLease,
@@ -370,7 +370,7 @@ func (s *Server) handlePresence(w http.ResponseWriter, r *http.Request) {
 
 // pickCandidateLocked wählt den besten Kandidaten für die Übergabe von
 // host (Info des Haupt-Zuschlags). Aufruf unter phMu.
-func (s *Server) pickCandidateLocked(host lease.Info) (lease.Candidate, bool) {
+func (s *Server) pickCandidateLocked(host lease.Info) (lease.Candidate, bool, string) {
 	now := s.now()
 	players := s.lm.Players()
 	inGame := func(name string) bool {
@@ -395,28 +395,43 @@ func (s *Server) pickCandidateLocked(host lease.Info) (lease.Candidate, bool) {
 
 	profs := s.loadProfiles() // einmal lesen statt je Kandidat
 	var cands []lease.Candidate
+	// Für die Fehlersuche: warum scheidet ein gemeldeter PC aus (nur Minecraft-
+	// Namen, nie E-Mail-Adressen oder IPs).
+	var veraltet, nichtImSpiel, keineUebernahme []string
+	gemeldet := 0
 	for _, e := range entries {
 		c := e.cand
-		if now.Sub(e.at) > presenceFresh || c.MachineID == host.Host.MachineID {
+		if c.MachineID == host.Host.MachineID {
 			continue
 		}
+		gemeldet++
 		m, ok := s.member(c.Email)
+		name := "?"
+		if ok && m.Minecraft != "" {
+			name = m.Minecraft
+		}
+		if now.Sub(e.at) > presenceFresh {
+			veraltet = append(veraltet, fmt.Sprintf("%s (zuletzt vor %d s gehört)", name, int(now.Sub(e.at).Seconds())))
+			continue
+		}
 		if !ok {
 			continue
 		}
 		c.MinecraftName = m.Minecraft
 		if e.joined && (m.Minecraft == "" || !inGame(m.Minecraft)) {
-			continue // spielt nicht (mehr) mit
+			nichtImSpiel = append(nichtImSpiel, name) // spielt nicht (mehr) mit
+			continue
 		}
 		if profs[strings.ToLower(c.Email)][c.MachineID].KeineUebernahme {
+			keineUebernahme = append(keineUebernahme, name)
 			continue
 		}
 		cands = append(cands, c)
 	}
 	if i := lease.Best(cands); i >= 0 {
-		return cands[i], true
+		return cands[i], true, ""
 	}
-	return lease.Candidate{}, false
+	return lease.Candidate{}, false, kandidatGrund(gemeldet, veraltet, nichtImSpiel, keineUebernahme, players)
 }
 
 // --- Start ---
@@ -448,9 +463,10 @@ func (s *Server) handleHandoverStart(w http.ResponseWriter, r *http.Request) {
 		case s.pending.Load() != nil:
 			return api.HandoverStartResponse{}, &httpError{http.StatusConflict, "Ein Zurückholen steht aus – keine Host-Übergabe möglich"}
 		}
-		cand, ok := s.pickCandidateLocked(info)
+		cand, ok, grund := s.pickCandidateLocked(info)
 		if !ok {
-			return api.HandoverStartResponse{}, &httpError{http.StatusConflict, "Kein Mitspieler-PC ist bereit, das Hosten zu übernehmen"}
+			s.log.Warn("Übergabe nicht möglich: kein Kandidat", "grund", strings.TrimSpace(grund))
+			return api.HandoverStartResponse{}, &httpError{http.StatusConflict, "Kein Mitspieler-PC ist bereit, das Hosten zu übernehmen" + grund}
 		}
 		s.hoSeq++
 		h := &handover{
@@ -464,7 +480,7 @@ func (s *Server) handleHandoverStart(w http.ResponseWriter, r *http.Request) {
 		}
 		s.setHoLocked(h)
 		s.log.Info("Übergabe gestartet", "id", h.id, "von", info.Host.Email, "an", cand.Email, "machine", cand.MachineID)
-		return api.HandoverStartResponse{HandoverID: h.id, To: *publicHost(candHost(cand))}, nil
+		return api.HandoverStartResponse{HandoverID: h.id, To: *s.hostFor(candHost(cand), id.member.Email, false)}, nil
 	}()
 	if err != nil {
 		s.restoreError(w, err)
@@ -613,4 +629,34 @@ func (s *Server) pickReplPortLocked(mainLease int64) int {
 		return p
 	}
 	return ports[0]
+}
+
+// kandidatGrund erklärt, warum kein PC für die Übergabe in Frage kam: wie
+// viele gemeldet waren und warum sie ausschieden (veraltet, nicht im Spiel,
+// „keine Übernahme“), dazu die Spielerliste des Hosts. Nur Minecraft-Namen.
+// Die Antwort beginnt mit „ (“ oder ist leer.
+func kandidatGrund(gemeldet int, veraltet, nichtImSpiel, keineUebernahme, spieler []string) string {
+	var teile []string
+	if gemeldet == 0 {
+		teile = append(teile, "kein PC hat sich als übernahmebereit gemeldet (läuft wanderwelt bei den Mitspielern, und stehen sie auf „Spielen“?)")
+	} else {
+		teile = append(teile, fmt.Sprintf("%d PC gemeldet", gemeldet))
+	}
+	if len(veraltet) > 0 {
+		teile = append(teile, "zu lange nicht gehört (Grenze 15 s): "+strings.Join(veraltet, ", "))
+	}
+	if len(nichtImSpiel) > 0 {
+		teile = append(teile, "eingetragener Name nicht in der Spielerliste: "+strings.Join(nichtImSpiel, ", "))
+	}
+	if len(keineUebernahme) > 0 {
+		teile = append(teile, "übernimmt laut Einstellung nicht: "+strings.Join(keineUebernahme, ", "))
+	}
+	if len(nichtImSpiel) > 0 {
+		list := "keine"
+		if len(spieler) > 0 {
+			list = strings.Join(spieler, ", ")
+		}
+		teile = append(teile, "Spielerliste des Hosts: "+list)
+	}
+	return " (" + strings.Join(teile, "; ") + ")"
 }

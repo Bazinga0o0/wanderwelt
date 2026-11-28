@@ -202,6 +202,12 @@ func (s *Server) healthSnapshot() api.Health {
 	}
 	s.health.mu.Unlock()
 
+	if s.karte != nil {
+		if k := s.karte.Gesundheit(); k != nil {
+			h.Karte, in.KarteFehler = k, k.Error
+		}
+	}
+
 	h.Warnings = gesundheit.Warnungen(in)
 	h.Status = gesundheit.Ampel(h.Warnings)
 	return h

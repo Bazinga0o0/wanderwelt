@@ -15,9 +15,10 @@ import (
 // ErrUnsupported: Die Funktion gibt es nur unter Windows.
 var ErrUnsupported = errors.New("nur unter Windows")
 
-// BlockReason zeigt Windows beim Herunterfahren, solange der Starter den
-// Schluss-Stand hochlädt.
-const BlockReason = "wanderwelt speichert gerade die Welt …"
+// BlockReason zeigt Windows beim Herunterfahren (Sperrbildschirm „wanderwelt
+// verhindert das Herunterfahren“), solange der Starter den Schluss-Stand
+// hochlädt.
+const BlockReason = "wanderwelt stoppt den Server und lädt die Welt hoch (dauert bis zu 90 Sekunden) …"
 
 // FinishTimeout: So lange hält der Starter das Herunterfahren höchstens auf.
 const FinishTimeout = 90 * time.Second

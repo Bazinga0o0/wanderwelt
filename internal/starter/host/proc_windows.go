@@ -63,8 +63,14 @@ func (j *procJob) contains(pid int) (bool, error) {
 // close schließt den Handle; was noch im Job läuft, beendet Windows.
 func (j *procJob) close() { windows.CloseHandle(j.h) }
 
-// createNoWindow ist CREATE_NO_WINDOW aus der Windows-API.
-const createNoWindow = 0x08000000
+// detachedProcess ist DETACHED_PROCESS aus der Windows-API: keine Konsole.
+const detachedProcess = 0x00000008
+
+// creationFlags: DETACHED_PROCESS und CREATE_NEW_PROCESS_GROUP. Der Tunnel
+// bekommt wie der Server keine Konsole, auch keine versteckte
+// (CREATE_NO_WINDOW): Beim Herunterfahren beendet Windows alle Prozesse an
+// einer Konsole sofort, siehe mcserver.creationFlags.
+const creationFlags = detachedProcess | syscall.CREATE_NEW_PROCESS_GROUP
 
 // procHandle ist ein offener Handle auf einen fremden Prozess. Solange er
 // offen ist, vergibt Windows dessen PID nicht neu: Prüfen, Warten und
@@ -151,9 +157,9 @@ func (p *procHandle) exitCode() (uint32, error) {
 	return code, nil
 }
 
-// hiddenProcAttr: tunnel.exe ohne Konsolenfenster.
+// hiddenProcAttr: tunnel.exe ohne Konsole und ohne Fenster.
 func hiddenProcAttr() *syscall.SysProcAttr {
-	return &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}
+	return &syscall.SysProcAttr{HideWindow: true, CreationFlags: creationFlags}
 }
 
 // restrictFile beschränkt den Zugriff auf path auf den eigenen Benutzer und

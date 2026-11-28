@@ -42,9 +42,11 @@ type mitgliederAnsicht struct {
 }
 
 // nameAuftrag ist der Körper der Aktion „mcname“.
+// ID ist die Kennung des Mitglieds (bei einem älteren Koordinator seine
+// Adresse; die Anzeige nennt sie nie).
 type nameAuftrag struct {
-	Email string `json:"email"`
-	Name  string `json:"name"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 var mcNameRE = regexp.MustCompile(`^[A-Za-z0-9_]{3,16}$`)
@@ -64,9 +66,9 @@ func (v *mitgliederAnsicht) nameDialog(gtx layout.Context, u *oberflaeche, ms []
 		v.aendern = map[string]*widget.Clickable{}
 	}
 	for _, m := range ms {
-		k := v.aendern[strings.ToLower(m.Email)]
+		k := v.aendern[strings.ToLower(m.Key())]
 		if k != nil && k.Clicked(gtx) && !v.nameWartet {
-			v.nameFuer, v.nameAnzeige, v.nameFehler = m.Email, cmp.Or(m.MinecraftName, "–"), ""
+			v.nameFuer, v.nameAnzeige, v.nameFehler = m.Key(), cmp.Or(m.MinecraftName, "–"), ""
 			v.nameEd.SingleLine, v.nameEd.Submit = true, true
 			v.nameEd.Filter = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"
 			v.nameEd.SetText(m.MinecraftName)
@@ -95,14 +97,14 @@ func (v *mitgliederAnsicht) nameDialog(gtx layout.Context, u *oberflaeche, ms []
 		return
 	}
 	v.nameWartet, v.nameFehler = true, ""
-	email := v.nameFuer
-	u.d.aktion("mcname", nameAuftrag{Email: email, Name: name}, func(err error) {
+	kennung := v.nameFuer
+	u.d.aktion("mcname", nameAuftrag{ID: kennung, Name: name}, func(err error) {
 		v.nameWartet = false
 		if err != nil {
 			v.nameFehler = err.Error()
 			return
 		}
-		if v.nameFuer == email {
+		if v.nameFuer == kennung {
 			v.nameFuer = ""
 		}
 		u.zeige("info", "Minecraft-Name geändert: "+name, time.Now())
@@ -143,7 +145,7 @@ func (v *mitgliederAnsicht) nameFormular(gtx layout.Context, u *oberflaeche) lay
 
 // rolleAuftrag ist der Körper der Aktion „rolle“.
 type rolleAuftrag struct {
-	Email string `json:"email"`
+	ID    string `json:"id"`
 	Admin bool   `json:"admin"`
 	Op    bool   `json:"op"`
 }
@@ -160,7 +162,7 @@ func schalterFuer(m *map[string]*widget.Bool, k string) *widget.Bool {
 	return b
 }
 
-// Spaltenbreiten der Tabelle (dp); Name und E-Mail teilen sich den Rest.
+// Spaltenbreiten der Tabelle (dp); Name und Kennung teilen sich den Rest.
 const (
 	spalteOnline = 92
 	spalteAdmin  = 64
@@ -175,10 +177,10 @@ func (v *mitgliederAnsicht) layout(gtx layout.Context, u *oberflaeche, s schnapp
 	}
 	ms := slices.Clone(s.mitglieder)
 	slices.SortFunc(ms, func(a, b api.MemberInfo) int {
-		return cmp.Compare(strings.ToLower(cmp.Or(a.MinecraftName, a.Email)), strings.ToLower(cmp.Or(b.MinecraftName, b.Email)))
+		return cmp.Compare(strings.ToLower(cmp.Or(a.MinecraftName, a.Key())), strings.ToLower(cmp.Or(b.MinecraftName, b.Key())))
 	})
 	for _, m := range ms {
-		key := strings.ToLower(m.Email)
+		key := strings.ToLower(m.Key())
 		a, o := schalterFuer(&v.admin, key), schalterFuer(&v.op, key)
 		if v.wartet[key] {
 			continue
@@ -194,8 +196,8 @@ func (v *mitgliederAnsicht) layout(gtx layout.Context, u *oberflaeche, s schnapp
 		if !ac && !oc {
 			continue
 		}
-		req := rolleAuftrag{Email: m.Email, Admin: a.Value, Op: o.Value}
-		name := cmp.Or(m.MinecraftName, m.Email)
+		req := rolleAuftrag{ID: m.Key(), Admin: a.Value, Op: o.Value}
+		name := cmp.Or(m.MinecraftName, "ein Mitglied ohne Minecraft-Namen")
 		jetzt, runde := gtx.Now, s.runde
 		senden := func() {
 			v.wartet[key], v.fehler = true, ""
@@ -213,7 +215,7 @@ func (v *mitgliederAnsicht) layout(gtx layout.Context, u *oberflaeche, s schnapp
 		}
 		// Sich selbst das Admin-Recht zu nehmen sperrt einen aus (der Reiter
 		// verschwindet): erst nachfragen.
-		if s.z != nil && s.z.Me != nil && strings.EqualFold(s.z.Me.Email, m.Email) && rollen[0] && !req.Admin {
+		if s.z != nil && s.z.Me != nil && m.IstIch(s.z.Me) && rollen[0] && !req.Admin {
 			a.Value = true
 			u.frage(rueckfrage{titel: "Eigenes Admin-Recht abgeben?",
 				text: "Du nimmst dir selbst das Admin-Recht. Danach verschwindet dieser Reiter, und nur ein anderer Admin kann es dir zurückgeben.",
@@ -294,7 +296,7 @@ func (v *mitgliederAnsicht) tabelle(gtx layout.Context, u *oberflaeche, ms []api
 		return layout.Inset{Top: 12, Bottom: 10, Left: 16, Right: 16}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
 				layout.Flexed(1, t.klein("MINECRAFT-NAME")),
-				layout.Flexed(1.4, t.klein("E-MAIL")),
+				layout.Flexed(1.4, t.klein("KENNUNG")),
 				zelle(spalteOnline, t.klein("ONLINE")),
 				zelle(spalteAdmin, t.klein("ADMIN")),
 				zelle(spalteOp, t.klein("OP")),
@@ -305,7 +307,7 @@ func (v *mitgliederAnsicht) tabelle(gtx layout.Context, u *oberflaeche, ms []api
 		return kartenZeileFarbe(gtx, t, t.f.flaeche2, true, len(ms) == 0, kopf)
 	})}
 	for i, m := range ms {
-		key := strings.ToLower(m.Email)
+		key := strings.ToLower(m.Key())
 		a, o := schalterFuer(&v.admin, key), schalterFuer(&v.op, key)
 		frei := !v.wartet[key]
 		letzte := i == len(ms)-1
@@ -335,7 +337,7 @@ func (v *mitgliederAnsicht) tabelle(gtx layout.Context, u *oberflaeche, ms []api
 						}),
 						layout.Flexed(1.4, func(gtx layout.Context) layout.Dimensions {
 							return layout.Inset{Right: 8}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-								return t.text(gtx, schrift{groesse: 13.5, farbe: t.f.leise, zeilen: 1}, m.Email)
+								return t.text(gtx, schrift{groesse: 13.5, farbe: t.f.leise, zeilen: 1}, kennzeile(m.ID))
 							})
 						}),
 						zelle(spalteOnline, func(gtx layout.Context) layout.Dimensions {

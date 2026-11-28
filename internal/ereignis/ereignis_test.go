@@ -223,3 +223,23 @@ func TestKurz(t *testing.T) {
 		t.Errorf("Länge: %q", got)
 	}
 }
+
+// Datenschutz: Der Koordinator nennt Hosts nur mit Kennung (die Adresse nur
+// dem Host selbst); ein Wechsel zwischen zwei fremden Hosts bleibt erkennbar,
+// ohne dass eine Adresse im Spiel ist.
+func TestHostWechselMitKennung(t *testing.T) {
+	anna := &api.Status{Host: &api.HostInfo{ID: "aaaaaaaaaaaaaaaa", MinecraftName: "Anna"}, HostReady: true}
+	ben := &api.Status{Host: &api.HostInfo{ID: "bbbbbbbbbbbbbbbb", MinecraftName: "Ben"}, HostReady: true}
+	es := Aus(anna, ben)
+	if got := arten(es); len(got) == 0 {
+		t.Fatalf("Wechsel von Anna zu Ben bleibt unbemerkt: %v", got)
+	}
+	for _, e := range es {
+		if e.WerKey != "" && e.WerKey != "bbbbbbbbbbbbbbbb" && e.WerKey != "aaaaaaaaaaaaaaaa" {
+			t.Errorf("Schlüssel %q ist keine Kennung", e.WerKey)
+		}
+	}
+	if es := Aus(anna, anna); len(es) != 0 {
+		t.Errorf("unverändert: %v", es)
+	}
+}

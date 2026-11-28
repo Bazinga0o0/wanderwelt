@@ -17,7 +17,6 @@ import (
 	"context"
 	"errors"
 	"log"
-	"strings"
 	"sync"
 	"time"
 
@@ -510,10 +509,9 @@ func handoverActive(st *api.Status) bool {
 	return st != nil && st.Handover != nil && st.Handover.State != api.HandoverFailed
 }
 
-// isTarget: h ist das Ziel der Übergabe (E-Mail, sonst Minecraft-Name).
+// isTarget: h ist das Ziel der Übergabe (Kennung, sonst E-Mail, sonst Minecraft-Name).
 func isTarget(h *api.HostInfo, to api.HostInfo) bool {
-	return to.Email != "" && strings.EqualFold(h.Email, to.Email) ||
-		to.Email == "" && to.MinecraftName != "" && strings.EqualFold(h.MinecraftName, to.MinecraftName)
+	return api.IstDasselbe(*h, to)
 }
 
 // clientReserveMB ist der RAM, den der Minecraft-Client noch braucht, wenn er

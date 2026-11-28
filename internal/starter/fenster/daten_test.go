@@ -228,7 +228,7 @@ func TestDatenPolling(t *testing.T) {
 	a.mu.Unlock()
 	fertig := make(chan error, 2)
 	d.aktion("zurueckholen", map[string]any{"world_id": "w", "number": 3}, func(err error) { fertig <- err })
-	d.aktion("rolle", rolleAuftrag{Email: "lukas@example.de"}, func(err error) { fertig <- err })
+	d.aktion("rolle", rolleAuftrag{ID: "e4d1c7a0b9358f26"}, func(err error) { fertig <- err })
 	warteAuf(t, 2*time.Second, "Aktionen fertig", func() bool {
 		d.abarbeiten()
 		return len(fertig) == 2
@@ -245,7 +245,7 @@ func TestDatenPolling(t *testing.T) {
 	a.mu.Lock()
 	akt := strings.Join(a.aktionen, "\n")
 	a.mu.Unlock()
-	if !strings.Contains(akt, `zurueckholen {"number":3,"world_id":"w"}`) || !strings.Contains(akt, `rolle {"email":"lukas@example.de","admin":false,"op":false}`) {
+	if !strings.Contains(akt, `zurueckholen {"number":3,"world_id":"w"}`) || !strings.Contains(akt, `rolle {"id":"e4d1c7a0b9358f26","admin":false,"op":false}`) {
 		t.Errorf("Aktionen: %s", akt)
 	}
 }

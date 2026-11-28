@@ -1,0 +1,16 @@
+[package]
+name = "mc-region"
+description = "Anvil-Regionsdateien lesen: Kopf, Chunks, Kompression, Sections, Paletten, Heightmaps, Biome"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+mc-nbt.workspace = true
+flate2.workspace = true
+lz4_flex.workspace = true
+
+[lints]
+workspace = true

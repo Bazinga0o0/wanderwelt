@@ -26,6 +26,7 @@ import (
 
 	"github.com/Bazinga0o0/wanderwelt/internal/api"
 	"github.com/Bazinga0o0/wanderwelt/internal/koord/config"
+	"github.com/Bazinga0o0/wanderwelt/internal/koord/karte"
 	"github.com/Bazinga0o0/wanderwelt/internal/koord/lease"
 	"github.com/Bazinga0o0/wanderwelt/internal/koord/portholder"
 	"github.com/Bazinga0o0/wanderwelt/internal/koord/server"
@@ -152,6 +153,11 @@ func run(cfgPath string) error {
 	if manifest != nil {
 		srv.UseManifest(manifest)
 	}
+	kd, err := karteDienst(cfg, st, srv)
+	if err != nil {
+		return err
+	}
+	srv.UseKarte(kd)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -186,6 +192,7 @@ func run(cfgPath string) error {
 	// Welche Blobs ein laufender Upload schon geschickt hat, weiß der
 	// Speicher nur im Speicher.
 	go srv.RunBenachrichtigung(ctx)
+	go kd.Lauf(ctx) // ohne karte.binary kehrt er sofort zurück
 	go every(ctx, expireEvery, true, srv.ExpireTick)
 	go every(ctx, pruneEvery, false, srv.PruneTick)
 	go srv.WarmUUIDs(ctx)
@@ -256,6 +263,27 @@ func portHolder(cfg *config.Config) (portholder.Client, error) {
 		return nil, fmt.Errorf("port_holder.secret_file %s ist leer", cfg.PortHolder.SecretFile)
 	}
 	return portholder.New(cfg.PortHolder.API, secret), nil
+}
+
+// karteDienst baut den Karten-Dienst. Karten, die schon unter data_dir/karte
+// liegen, werden immer ausgeliefert; erzeugt wird nur mit karte.binary (und
+// vorhandenem Programm, sonst schaltet der Lauf sich mit einer Meldung aus).
+func karteDienst(cfg *config.Config, st *store.Store, srv *server.Server) (*karte.Dienst, error) {
+	k := cfg.Karte
+	d, err := karte.Neu(karte.Optionen{
+		Verzeichnis: filepath.Join(cfg.DataDir, "karte"),
+		Programm:    k.Binary, Farben: k.Colors, Nice: k.Nice, Threads: k.Threads,
+		MinAbstand: k.MinInterval, MaxBytes: k.MaxBytes,
+		Quelle: st, Gesperrt: srv.InWartung,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if k.An() {
+		slog.Info("Karte: Erzeugung an", "binary", k.Binary, "nice", k.Nice, "threads", k.Threads,
+			"min_interval", k.MinInterval, "max_bytes", k.MaxBytes)
+	}
+	return d, nil
 }
 
 func storeDir(cfg *config.Config) string { return filepath.Join(cfg.DataDir, "store") }

@@ -43,7 +43,7 @@ func (e *memberEnv) joinRequests() []api.JoinRequestInfo {
 
 func (e *memberEnv) decide(as who, email, verb string) int {
 	e.t.Helper()
-	return call(e.t, e.base, as, http.MethodPost, "/v1/join-requests/"+email+"/"+verb, nil, nil)
+	return call(e.t, e.base, as, http.MethodPost, "/v1/join-requests/"+e.key(email)+"/"+verb, nil, nil)
 }
 
 // Ein Nicht-Mitglied darf nur POST und GET /v1/join; jede andere Gruppe von
@@ -111,7 +111,7 @@ func TestJoinGuestOnlyJoin(t *testing.T) {
 	if code := e.decide(userB, guestD.email, "accept"); code != http.StatusForbidden {
 		t.Errorf("Mitglied nimmt an: %d", code)
 	}
-	if got := e.joinRequests(); len(got) != 1 || got[0].Email != guestD.email || got[0].MinecraftName != "Dora" {
+	if got := e.joinRequests(); len(got) != 1 || got[0].ID != e.key(guestD.email) || got[0].Email != got[0].ID || got[0].MinecraftName != "Dora" {
 		t.Errorf("Anfragen: %+v", got)
 	}
 }
@@ -266,7 +266,7 @@ func TestJoinAcceptDecline(t *testing.T) {
 	// Als Mitglied steht Dora in der Mitgliederliste; ein Admin kann ihre Rolle setzen.
 	found := false
 	for _, m := range e.members(userA) {
-		found = found || m.Email == guestD.email && m.MinecraftName == "Dora" && !m.Admin
+		found = found || m.ID == e.key(guestD.email) && m.MinecraftName == "Dora" && !m.Admin
 	}
 	if !found {
 		t.Error("Dora fehlt in der Mitgliederliste")
@@ -305,7 +305,7 @@ func TestJoinSurvivesRestart(t *testing.T) {
 		t.Errorf("Wartezeit nach Neustart: %d, want 429", code)
 	}
 	got := e2.joinRequests()
-	if len(got) != 1 || got[0].Email != "fritz@example.org" || got[0].MinecraftName != "Gast01" {
+	if len(got) != 1 || got[0].ID != e2.key("fritz@example.org") || got[0].MinecraftName != "Gast01" {
 		t.Errorf("offene Anfragen nach Neustart: %+v", got)
 	}
 	if n := e2.me(userA).PendingJoins; n != 1 {

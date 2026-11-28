@@ -27,9 +27,10 @@
 //
 // Körper der Aktionen (JSON): import = {"dir": …, "ohne_spielerdatei":
 // bool}; profil = api.Profile; autostart = {"an": bool}; zurueckholen =
-// api.RestoreRequest; speicher = api.BudgetRequest; rolle = {"email": …,
-// "admin": bool, "op": bool}; beitritt = {"email": …, "annehmen": bool}
-// (Beitrittsanfrage annehmen oder ablehnen); benachrichtigung = {"art": …,
+// api.RestoreRequest; speicher = api.BudgetRequest; rolle = {"id": …,
+// "admin": bool, "op": bool}; mcname = {"id": …, "name": …}; beitritt = {"id": …, "annehmen": bool}
+// (id: Kennung des Mitglieds bzw. der Anfrage; Beitrittsanfrage annehmen oder
+// ablehnen); benachrichtigung = {"art": …,
 // "an": bool} (ein Windows-Hinweis ein- oder ausschalten; Antwort {"an": bool}); welt = {"id": …} (Welt für
 // „Spielen“ wählen), weltneu = api.WorldCreate, weltaendern = {"id": …,
 // "patch": api.WorldPatch}, weltloeschen = {"id": …, "name": …} (name: der

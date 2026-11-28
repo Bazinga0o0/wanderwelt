@@ -379,7 +379,7 @@ func (a *App) watchJoin(ctx context.Context, cancel context.CancelFunc, seq int,
 			a.fortNote(st)
 		}
 		return st, err
-	}, host.Email, joinPoll, joinWatch, joinReadyMax, func(*api.Status) {
+	}, host, joinPoll, joinWatch, joinReadyMax, func(*api.Status) {
 		a.mu.Lock()
 		if a.phase == phJoined {
 			a.detail = ""
@@ -431,12 +431,12 @@ const (
 	watchHandedOver                    // der Host wechselte per Übergabe auf den neuen Host
 )
 
-// watchHost fragt alle interval den Status ab, bis der Host (hostEmail)
+// watchHost fragt alle interval den Status ab, bis der Host (host)
 // verschwindet (hostGone), ctx endet oder er nach seiner Bereitschaft noch
 // watchAfter lang da war (watchDone). Sobald der Status ihn als bereit
 // meldet, läuft ready (einmal). Ist er nach readyMax nicht bereit, endet es
 // mit hostNeverReady. Fehler beim Abfragen werden übergangen.
-func watchHost(ctx context.Context, status func(context.Context) (*api.Status, error), hostEmail string,
+func watchHost(ctx context.Context, status func(context.Context) (*api.Status, error), host api.HostInfo,
 	interval, watchAfter, readyMax time.Duration, ready func(*api.Status)) watchResult {
 	start := time.Now()
 	var readySince time.Time
@@ -463,9 +463,9 @@ func watchHost(ctx context.Context, status func(context.Context) (*api.Status, e
 			log.Printf("Mitspielen: Status: %v", err)
 		case st.Host == nil && handoverActive(st):
 			// Der Host wechselt per Übergabe: weiter beobachten, nicht „weg“.
-		case st.Host != nil && !strings.EqualFold(st.Host.Email, hostEmail) && target != nil && isTarget(st.Host, *target):
+		case st.Host != nil && !api.GleicherHost(*st.Host, host) && target != nil && isTarget(st.Host, *target):
 			return watchHandedOver
-		case st.Host == nil || !strings.EqualFold(st.Host.Email, hostEmail):
+		case st.Host == nil || !api.GleicherHost(*st.Host, host):
 			return hostGone
 		case st.HostReady && readySince.IsZero():
 			readySince = time.Now()
@@ -529,7 +529,7 @@ func (a *App) startHost(in playInput, resp *api.PlayResponse, dauer bool, ov *ov
 	srv := &watchedServer{
 		Server:   mcserver.NewFabric(),
 		started:  func() { a.setDetail("Server läuft, wartet auf tunnel …") },
-		stopping: func() { a.setPhase(phUploading, "stoppt den Server und lädt den Stand hoch …") },
+		stopping: func() { a.setPhase(phUploading, a.stoppingDetail()) },
 	}
 	pr := newPercent(func(p int) { a.setDetail(fmt.Sprintf("lädt die Welt: %d %%", p)) })
 	ho := a.uebergabe.newSession()
@@ -771,8 +771,21 @@ func (a *App) endHosting(why string) {
 		return
 	}
 	log.Printf("Hosten beenden: %s", why)
-	a.setPhase(phUploading, "stoppt den Server und lädt den Stand hoch …")
+	a.setPhase(phUploading, a.stoppingDetail())
 	cancel()
+}
+
+// stoppingDetail ist die Meldung im Fenster, während der Server stoppt und der
+// Schluss-Stand hochgeladen wird; beim Herunterfahren von Windows sagt sie, was
+// der PC gerade tut und wie lange es höchstens dauert (winsys.FinishTimeout).
+func (a *App) stoppingDetail() string {
+	a.mu.Lock()
+	ending := a.ending
+	a.mu.Unlock()
+	if ending {
+		return fmt.Sprintf("Windows fährt herunter – stoppt den Server und lädt den Stand hoch (bis zu %d s) …", int(winsys.FinishTimeout.Seconds()))
+	}
+	return "stoppt den Server und lädt den Stand hoch …"
 }
 
 // finishForShutdown: Windows fährt herunter, während dieser PC hostet oder

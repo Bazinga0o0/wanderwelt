@@ -85,6 +85,9 @@ type Config struct {
 	// DiscordArten: aus discord_ereignisse; stellt Schalter gegenüber dem
 	// Standard (ereignis.Standard) um.
 	DiscordArten map[ereignis.Art]bool `yaml:"-"`
+	// Karte: Erzeugung der Karte (Abschnitt karte, siehe Karte); ohne
+	// Abschnitt aus.
+	Karte Karte `yaml:"-"`
 }
 
 // Grenzen für gruppe.titel und gruppe.beschreibung (Zeichen).
@@ -135,6 +138,8 @@ type rawConfig struct {
 	// DiscordEreignisse: Schalter je Ereignis für den Webhook (Schlüssel aus
 	// ereignis.Katalog).
 	DiscordEreignisse map[string]bool `yaml:"discord_ereignisse"`
+	// Karte: Abschnitt karte (nil: fehlt).
+	Karte *rawKarte `yaml:"karte"`
 }
 
 // Load liest die Konfiguration aus path. Unbekannte Schlüssel, ein
@@ -214,6 +219,10 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("%s: empty_timeout: %w", path, err)
 	}
 	c.EmptyTimeout = timeout
+
+	if c.Karte, err = parseKarte(raw.Karte); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
 
 	if err := checkHandoverPorts(c.PortHolder.HandoverPorts, c.PortHolder.Port); err != nil {
 		return nil, fmt.Errorf("%s: port_holder.handover_ports: %w", path, err)

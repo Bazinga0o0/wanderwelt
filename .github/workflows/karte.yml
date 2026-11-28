@@ -1,0 +1,126 @@
+name: karte
+
+# VORSCHLAG, noch nicht geprüft und nicht in Betrieb genommen: baut das Werkzeug
+# `karte` (tools/karte-rs) bei einem Tag `v*` für linux/arm64 (mini),
+# linux/amd64 und windows/amd64 und hängt die Dateien an dasselbe Release, das
+# release.yml (GoReleaser) für den Tag anlegt. Die Dateien heißen
+# `karte-linux-arm64`, `karte-linux-amd64`, `karte-windows-amd64.exe`, dazu je
+# eine `.sha256`-Datei. Die Linux-Programme sind statisch (musl) und laufen auf
+# jeder Distribution; sie enthalten nur reines Rust (ohne das Feature
+# "untersuchung", siehe tools/karte-rs/README.md).
+#
+# Zugriff: nur das GITHUB_TOKEN dieses Laufs, nur `contents: write` und nur im
+# Bau-Job (zum Hochladen). Keine weiteren Geheimnisse, keine fremden Actions
+# außer actions/checkout (feste Commit-SHA wie in ci.yml und release.yml).
+# Rust kommt von rustup, das auf den GitHub-Läufern vorinstalliert ist.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+# Standardmäßig nur lesen; der Bau-Job erweitert das für sich.
+permissions:
+  contents: read
+
+jobs:
+  bauen:
+    name: karte ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    permissions:
+      contents: write # Dateien an das Release hängen
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-arm64
+            runner: ubuntu-24.04-arm # nativer ARM-Läufer, kein Cross-Build
+            target: aarch64-unknown-linux-musl
+            exe: karte
+            out: karte-linux-arm64
+          - name: linux-amd64
+            runner: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+            exe: karte
+            out: karte-linux-amd64
+          - name: windows-amd64
+            runner: windows-2025
+            target: x86_64-pc-windows-msvc
+            exe: karte.exe
+            out: karte-windows-amd64.exe
+    defaults:
+      run:
+        shell: bash
+        working-directory: tools/karte-rs
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Genau die Rust-Version aus Cargo.toml (rust-version), kein Cache: Ein Release
+      # darf nicht aus einem Cache gebaut werden, den andere Läufe schreiben können.
+      - name: Rust installieren
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          rustup toolchain install 1.95 --profile minimal --target "$TARGET"
+          rustup default 1.95
+          rustc --version
+
+      # Die Windows-Datei bringt die C-Laufzeit mit (läuft ohne Visual-C++-Paket).
+      - name: C-Laufzeit statisch (nur Windows)
+        if: runner.os == 'Windows'
+        run: echo "RUSTFLAGS=-C target-feature=+crt-static" >> "$GITHUB_ENV"
+
+      - name: Tests
+        env:
+          TARGET: ${{ matrix.target }}
+        run: cargo test --release --locked --no-default-features --target "$TARGET"
+
+      - name: Bauen
+        env:
+          TARGET: ${{ matrix.target }}
+        run: cargo build --release --locked --no-default-features -p karte --target "$TARGET"
+
+      # Rauchprobe: ohne Argumente endet das Programm mit Exit 2 (Aufruffehler).
+      - name: Rauchprobe
+        env:
+          TARGET: ${{ matrix.target }}
+          EXE: ${{ matrix.exe }}
+        run: |
+          set +e
+          "target/${TARGET}/release/${EXE}" >/dev/null 2>&1
+          code=$?
+          if [ "$code" != "2" ]; then
+            echo "::error::erwartet Exit 2, bekam ${code}"
+            exit 1
+          fi
+
+      - name: Dateien vorbereiten
+        env:
+          TARGET: ${{ matrix.target }}
+          EXE: ${{ matrix.exe }}
+          OUT: ${{ matrix.out }}
+        run: |
+          mkdir -p ../../dist
+          cp "target/${TARGET}/release/${EXE}" "../../dist/${OUT}"
+          (cd ../../dist && sha256sum "${OUT}" > "${OUT}.sha256")
+          ls -l ../../dist
+
+      # release.yml legt das Release gleichzeitig an: auf es warten, dann hochladen.
+      - name: An das Release hängen
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          for i in $(seq 1 60); do
+            if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+              break
+            fi
+            echo "Release ${TAG} gibt es noch nicht (Versuch ${i}); warte 30 s"
+            sleep 30
+          done
+          gh release view "$TAG" --repo "$REPO" >/dev/null
+          gh release upload "$TAG" ../../dist/* --repo "$REPO" --clobber

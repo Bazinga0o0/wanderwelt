@@ -130,6 +130,9 @@ func New(g *group.Group) *Client {
 		tr = &http.Transport{Proxy: http.ProxyFromEnvironment, ForceAttemptHTTP2: true}
 	}
 	tr.ResponseHeaderTimeout = responseHeaderTimeout
+	// Die Karte holt bis zu acht Kacheln gleichzeitig; ohne mehr Platz für
+	// ruhende Verbindungen gäbe es für jede einen neuen TLS-Aufbau.
+	tr.MaxIdleConnsPerHost = 8
 	return &Client{
 		base:  strings.TrimRight(strings.TrimSpace(g.Coordinator), "/"),
 		token: strings.TrimSpace(g.Token),
@@ -954,23 +957,25 @@ func (c *Client) Stats(ctx context.Context) (*api.Stats, error) {
 	return &out, nil
 }
 
-// SetRole setzt Admin- und Op-Recht des Mitglieds email
+// SetRole setzt Admin- und Op-Recht des Mitglieds (key: Kennung aus der
+// Mitgliederliste, bei einem älteren Koordinator die Adresse)
 // (PUT /v1/members/{email}; nur Admins). 404 mit eigener Meldung: kein
 // Mitglied; 409: danach gäbe es keinen Admin mehr.
-func (c *Client) SetRole(ctx context.Context, email string, r api.RoleRequest) (*api.MemberInfo, error) {
+func (c *Client) SetRole(ctx context.Context, key string, r api.RoleRequest) (*api.MemberInfo, error) {
 	var out api.MemberInfo
-	if err := c.call(ctx, callTimeout, http.MethodPut, "/v1/members/"+url.PathEscape(email), r, &out); err != nil {
+	if err := c.call(ctx, callTimeout, http.MethodPut, "/v1/members/"+url.PathEscape(key), r, &out); err != nil {
 		return nil, notSupported(err, false)
 	}
 	return &out, nil
 }
 
-// SetMemberMinecraft setzt den Minecraft-Namen des Mitglieds email
+// SetMemberMinecraft setzt den Minecraft-Namen des Mitglieds (key wie bei
+// SetRole)
 // (PUT /v1/members/{email}/minecraft; nur Admins, jederzeit). 400: der Name
 // ist ungültig, vergeben oder Mojang kennt ihn nicht (*StatusError mit dem
 // Text des Koordinators); 503: Mojang nicht erreichbar.
-func (c *Client) SetMemberMinecraft(ctx context.Context, email, name string) error {
-	return notSupported(c.call(ctx, callTimeout, http.MethodPut, "/v1/members/"+url.PathEscape(email)+"/minecraft",
+func (c *Client) SetMemberMinecraft(ctx context.Context, key, name string) error {
+	return notSupported(c.call(ctx, callTimeout, http.MethodPut, "/v1/members/"+url.PathEscape(key)+"/minecraft",
 		api.MinecraftNameRequest{MinecraftName: name}, nil), false)
 }
 

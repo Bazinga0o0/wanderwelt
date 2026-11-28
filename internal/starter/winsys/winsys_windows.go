@@ -24,21 +24,22 @@ var (
 	user32   = windows.NewLazySystemDLL("user32.dll")
 	kernel32 = windows.NewLazySystemDLL("kernel32.dll")
 
-	procSetThreadExecutionState    = kernel32.NewProc("SetThreadExecutionState")
-	procGetSystemPowerStatus       = kernel32.NewProc("GetSystemPowerStatus")
-	procAttachConsole              = kernel32.NewProc("AttachConsole")
-	procRegisterClassExW           = user32.NewProc("RegisterClassExW")
-	procCreateWindowExW            = user32.NewProc("CreateWindowExW")
-	procDefWindowProcW             = user32.NewProc("DefWindowProcW")
-	procGetMessageW                = user32.NewProc("GetMessageW")
-	procTranslateMessage           = user32.NewProc("TranslateMessage")
-	procDispatchMessageW           = user32.NewProc("DispatchMessageW")
-	procPostMessageW               = user32.NewProc("PostMessageW")
-	procSendMessageW               = user32.NewProc("SendMessageW")
-	procRegisterWindowMessageW     = user32.NewProc("RegisterWindowMessageW")
-	procShutdownBlockReasonCreate  = user32.NewProc("ShutdownBlockReasonCreate")
-	procShutdownBlockReasonDestroy = user32.NewProc("ShutdownBlockReasonDestroy")
-	procShutdownBlockReasonQuery   = user32.NewProc("ShutdownBlockReasonQuery")
+	procSetThreadExecutionState      = kernel32.NewProc("SetThreadExecutionState")
+	procGetSystemPowerStatus         = kernel32.NewProc("GetSystemPowerStatus")
+	procAttachConsole                = kernel32.NewProc("AttachConsole")
+	procRegisterClassExW             = user32.NewProc("RegisterClassExW")
+	procCreateWindowExW              = user32.NewProc("CreateWindowExW")
+	procDefWindowProcW               = user32.NewProc("DefWindowProcW")
+	procGetMessageW                  = user32.NewProc("GetMessageW")
+	procTranslateMessage             = user32.NewProc("TranslateMessage")
+	procDispatchMessageW             = user32.NewProc("DispatchMessageW")
+	procPostMessageW                 = user32.NewProc("PostMessageW")
+	procSendMessageW                 = user32.NewProc("SendMessageW")
+	procRegisterWindowMessageW       = user32.NewProc("RegisterWindowMessageW")
+	procShutdownBlockReasonCreate    = user32.NewProc("ShutdownBlockReasonCreate")
+	procShutdownBlockReasonDestroy   = user32.NewProc("ShutdownBlockReasonDestroy")
+	procShutdownBlockReasonQuery     = user32.NewProc("ShutdownBlockReasonQuery")
+	procSetProcessShutdownParameters = kernel32.NewProc("SetProcessShutdownParameters")
 )
 
 const (
@@ -201,10 +202,26 @@ func OnShutdown(h ShutdownHooks) error {
 	}
 	session.hooks = h
 	session.mu.Unlock()
+	setShutdownLevel()
 
 	ready := make(chan error, 1)
 	go sessionThread(ready)
 	return <-ready
+}
+
+// shutdownLevel ist die Beendigungsstufe des Starters: 0x3FF ist das obere Ende
+// des Bereichs „Anwendungen zuerst“ (0x300–0x3FF). Windows beendet Prozesse
+// von hohen Stufen zu niedrigen; alle Prozesse beginnen bei 0x280, also auch
+// Server und Tunnel. Der Starter kommt damit vor ihnen an die Reihe
+// und kann den Server noch stoppen, bevor Windows ihn beendet.
+const shutdownLevel = 0x3FF
+
+// setShutdownLevel setzt die Beendigungsstufe (SetProcessShutdownParameters).
+// Ein Fehler ist nur ein Log wert.
+func setShutdownLevel() {
+	if r, _, err := procSetProcessShutdownParameters.Call(shutdownLevel, 0); r == 0 {
+		log.Printf("winsys: SetProcessShutdownParameters: %v", err)
+	}
 }
 
 func sessionThread(ready chan<- error) {
