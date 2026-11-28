@@ -203,9 +203,14 @@ func TestKarteTokenNichtImLog(t *testing.T) {
 	_, err = c.KarteManifest(t.Context(), "w1") // 503
 	merke(err)
 	k.Ausfall(false)
-	ctx, cancel := context.WithTimeout(t.Context(), time.Nanosecond)
-	defer cancel()
-	_, err = c.KarteKachel(ctx, "w1", karte.Kachel{}, "") // Zeitüberschreitung
+	// Abgebrochener Kontext statt einer winzigen Frist: Eine Frist von 1 ns
+	// läuft unter Windows nicht sicher ab (grobe Uhr), der Abbruch immer.
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err = c.KarteKachel(ctx, "w1", karte.Kachel{}, "") // abgebrochen
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("abgebrochener Kontext: %v, erwartet context.Canceled", err)
+	}
 	merke(err)
 	ts := httptest.NewServer(http.NotFoundHandler())
 	url := ts.URL

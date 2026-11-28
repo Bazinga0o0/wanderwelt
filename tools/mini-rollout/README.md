@@ -15,7 +15,7 @@ Vormerken, etwa nach einem Release:
       --koordinator wanderwelt-koordinator-0.1.10-linux-arm64 \
       --artifact wanderwelt-0.1.10.exe --starter 0.1.10
 
-Optional `--manifest-py DATEI` / `--config-py DATEI` (Skript „python3 x.py ALT NEU“
+Mit `--opt DATEI=NAME` kommen Programme nach `/opt/wanderwelt/` (z. B. `karte`). Optional `--manifest-py DATEI` / `--config-py DATEI` (Skript „python3 x.py ALT NEU“
 für Manifest bzw. `koordinator.yaml`), weitere `--artifact`-Dateien.
 
 Auf dem Server: `wanderwelt-rollout status` (wer hostet, seit wann Ruhe, Warteschlange,

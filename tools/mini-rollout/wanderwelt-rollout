@@ -7,6 +7,7 @@
 # $Q/queue/<name>/ und enthält (alles optional außer SHA256SUMS):
 #   koordinator     neues Koordinator-Programm (-> /opt/wanderwelt/, Neustart)
 #   artifacts/*     Dateien für <data_dir>/artifacts/ (z. B. wanderwelt-0.1.10.exe)
+#   opt/*           Programme für /opt/wanderwelt/ (z. B. karte), Modus 0755
 #   starter-version Text „0.1.10“: setzt im Manifest starter.version/url/sha256/size
 #                   aus artifacts/wanderwelt-<version>.exe
 #   manifest.py     Skript „python3 manifest.py <alt> <neu>“, ändert das Manifest
@@ -176,6 +177,12 @@ apply() { # <eintrag>
 		done
 	fi
 
+	if [ -d "$d/opt" ]; then
+		for f in "$d"/opt/*; do
+			[ -f "$f" ] && install -o root -g root -m 0755 "$f" "$(dirname "$BIN")/"
+		done
+	fi
+
 	# Letzte Prüfung: hostet inzwischen jemand?
 	if busy; then
 		log "Eintrag $e: es wird gehostet, warte weiter"
@@ -221,7 +228,7 @@ apply() { # <eintrag>
 
 	# 5. Fertig: Eintrag nach done/, große Dateien weg (liegen jetzt am Ziel).
 	mkdir -p "$Q/done"
-	rm -rf "$d/koordinator" "$d/artifacts"
+	rm -rf "$d/koordinator" "$d/artifacts" "$d/opt"
 	echo "eingespielt $(date '+%F %T'), Sicherung $b" >"$d/ergebnis"
 	mv "$d" "$Q/done/$e-$ts"
 	prune

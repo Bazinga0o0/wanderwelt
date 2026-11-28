@@ -230,8 +230,10 @@ func TestSnapshotRetryAbortedByFencing(t *testing.T) {
 	e = newHostEnv(t, []string{"Alex"})
 	t.Cleanup(open)
 	p := &retryStage{e: e}
+	arrived := make(chan struct{})
 	p.hook = func(n int) {
 		if n == 0 {
+			close(arrived)
 			<-gate // der erste Versuch hängt in Stage …
 		}
 	}
@@ -243,11 +245,19 @@ func TestSnapshotRetryAbortedByFencing(t *testing.T) {
 	e.co.failHeartbeats.Store(true) // letztes erfolgreiches Lebenszeichen 4:20 → Fencing 5:20
 	e.drv.advanceTo(5*time.Minute - time.Second)
 	e.drv.allow = 1 // ab 5:00 hängt der Zwischenstand in Stage
+	e.drv.advanceTo(5 * time.Minute)
+	// Erst weiterstellen, wenn der Versuch wirklich in Stage hängt: Vor Stage
+	// wartet er noch (echte Zeit) auf die Ruhe der Welt.
+	select {
+	case <-arrived:
+	case <-time.After(30 * time.Second):
+		t.Fatal("Stage kommt nicht an")
+	}
 	e.drv.advanceTo(5*time.Minute + 19*time.Second)
 	if got := p.times(); len(got) != 1 {
 		t.Fatalf("Stage %d× bis 5:19, erwartet 1", len(got))
 	}
-	// Der Versuch scheitert um 5:19 (die Wiederholung wäre für 5:24 geplant);
+	// Der Versuch scheitert um 5:19 (die Wiederholung wäre für 5:29 geplant);
 	// um 5:20 fenct die Sitzung.
 	e.drv.allow = 0
 	e.drv.resync()
@@ -314,15 +324,20 @@ func (w *writerServer) sinceLastWrite() time.Duration {
 // beginnt Stage erst danach – und scheitert so nicht.
 func TestSnapshotWaitsForQuietWorld(t *testing.T) {
 	oldMin, oldCap, oldP, oldM := snapQuietMin, snapQuietCap, snapQuietPoll, snapQuietMax
-	snapQuietMin, snapQuietCap, snapQuietPoll, snapQuietMax = 100*time.Millisecond, 100*time.Millisecond, 10*time.Millisecond, 5*time.Second
+	snapQuietMin, snapQuietCap, snapQuietPoll, snapQuietMax = 300*time.Millisecond, 300*time.Millisecond, 10*time.Millisecond, 10*time.Second
 	t.Cleanup(func() { snapQuietMin, snapQuietCap, snapQuietPoll, snapQuietMax = oldMin, oldCap, oldP, oldM })
 
 	e, p := newRetryEnv(t)
-	ws := &writerServer{fakeServer: e.srv, tail: 300 * time.Millisecond, every: 20 * time.Millisecond,
+	ws := &writerServer{fakeServer: e.srv, tail: 400 * time.Millisecond, every: 20 * time.Millisecond,
 		file: filepath.Join(e.srv.world, "tail.dat")}
 	e.d.Server = ws
+	var qmu sync.Mutex
 	var quietAtStage []time.Duration
-	p.hook = func(n int) { quietAtStage = append(quietAtStage, ws.sinceLastWrite()) }
+	p.hook = func(n int) {
+		qmu.Lock()
+		defer qmu.Unlock()
+		quietAtStage = append(quietAtStage, ws.sinceLastWrite())
+	}
 	r := e.start(t)
 	e.drv.advanceTo(5*time.Minute + 30*time.Second)
 	if c := len(e.co.hostCommits()); c != 1 {
@@ -331,8 +346,11 @@ func TestSnapshotWaitsForQuietWorld(t *testing.T) {
 	if got := p.times(); len(got) != 1 {
 		t.Fatalf("Stage %d×, erwartet 1: Die Wartezeit hätte die Änderung abfangen müssen", len(got))
 	}
-	if len(quietAtStage) != 1 || quietAtStage[0] < 100*time.Millisecond {
-		t.Fatalf("Stage begann %v nach dem letzten Schreiben, erwartet mindestens 100ms", quietAtStage)
+	qmu.Lock()
+	got := slices.Clone(quietAtStage)
+	qmu.Unlock()
+	if len(got) != 1 || got[0] < 300*time.Millisecond {
+		t.Fatalf("Stage begann %v nach dem letzten Schreiben, erwartet mindestens 300ms", got)
 	}
 	time.Sleep(ws.tail + 100*time.Millisecond) // der Schreiber ist fertig, bevor der Schluss-Stand kopiert
 	e.drv.resync()
